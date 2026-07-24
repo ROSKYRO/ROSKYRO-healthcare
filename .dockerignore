@@ -1,0 +1,9 @@
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+frontend/build
+backend/.env
+.git
+.gitignore
+*.md
