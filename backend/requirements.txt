@@ -1,0 +1,21 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+motor==3.7.1
+pymongo==4.10.1
+pydantic==2.10.4
+pydantic-settings==2.7.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.20
+python-dotenv==1.0.1
+mongomock-motor==0.0.36
+
+# Test-only deps -- not needed at runtime, but kept in the same file so
+# `pip install -r requirements.txt` (dev/CI) gives you everything to run
+# `pytest`. Railway's production image builds fine either way (tests/ and
+# these packages are harmless if present, and can be pip-uninstalled from a
+# prod-only lockfile if you split them out later).
+pytest==8.3.4
+pytest-asyncio==0.25.2
+httpx==0.28.1
