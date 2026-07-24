@@ -3,6 +3,11 @@ import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, Table, Button, Input, Textarea, Badge, PageLoading, formatCurrency, formatDate } from '../../components/ui';
 
+// Plan codes stay lowercase internally ('grow'/'manage'/'connect'/'complete'),
+// but 'connect' now displays as "Networking Marketing" -- a plain
+// .toUpperCase() on the code would still read "CONNECT".
+const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing', complete: 'ROSKYRO Complete' };
+
 function PlanEditor({ plan, onSave, busy }) {
   const [form, setForm] = useState({
     name: plan.name,
@@ -71,16 +76,23 @@ export default function PricingManagement() {
   const [payment, setPayment] = useState(null);
   const [subscriptions, setSubscriptions] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ upiId: '', paymentNote: '' });
+  const [marketingRate, setMarketingRate] = useState(null);
+  const [marketingRateForm, setMarketingRateForm] = useState('');
   const [busyCode, setBusyCode] = useState(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
+  const [marketingRateBusy, setMarketingRateBusy] = useState(false);
   const [message, setMessage] = useState('');
 
   const load = useCallback(() => {
-    Promise.all([api.get('/plans'), api.get('/settings/payment'), api.get('/plans/subscriptions')]).then(([p, s, sub]) => {
+    Promise.all([
+      api.get('/plans'), api.get('/settings/payment'), api.get('/plans/subscriptions'), api.get('/settlements/marketing-fee-rate'),
+    ]).then(([p, s, sub, mr]) => {
       setPlans(p.data.plans);
       setPayment(s.data);
       setPaymentForm({ upiId: s.data.upi_id || '', paymentNote: s.data.payment_note || '' });
       setSubscriptions(sub.data.subscriptions);
+      setMarketingRate(mr.data.percentage);
+      setMarketingRateForm(String(mr.data.percentage));
     });
   }, []);
 
@@ -97,7 +109,7 @@ export default function PricingManagement() {
     );
   }
 
-  if (!plans || !payment || !subscriptions) return <PageLoading />;
+  if (!plans || !payment || !subscriptions || marketingRate == null) return <PageLoading />;
 
   function renewalCell(sub) {
     if (sub.status !== 'active' || !sub.renewal_date) {
@@ -117,7 +129,7 @@ export default function PricingManagement() {
     setMessage('');
     try {
       await api.patch(`/plans/${code}`, patch);
-      setMessage(`${code.toUpperCase()} updated.`);
+      setMessage(`${PLAN_DISPLAY_NAMES[code] || code.toUpperCase()} updated.`);
       load();
     } catch (err) {
       setMessage(err?.response?.data?.error || 'Could not save this plan.');
@@ -141,12 +153,27 @@ export default function PricingManagement() {
     }
   }
 
+  async function saveMarketingRate(e) {
+    e.preventDefault();
+    setMarketingRateBusy(true);
+    setMessage('');
+    try {
+      await api.patch('/settlements/marketing-fee-rate', { percentage: Number(marketingRateForm) });
+      setMessage('Marketing Fee Payout rate updated.');
+      load();
+    } catch (err) {
+      setMessage(err?.response?.data?.error || 'Could not save the Marketing Fee Payout rate.');
+    } finally {
+      setMarketingRateBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Pricing & Payments</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Super admin only — change what GROW / MANAGE / CONNECT / Complete cost, and where customer
+          Super admin only — change what GROW / MANAGE / Networking Marketing / Complete cost, and where customer
           payments are collected.
         </p>
       </div>
@@ -165,6 +192,23 @@ export default function PricingManagement() {
           />
           <p className="text-xs text-gray-400">Last updated {payment.updated_at ? new Date(payment.updated_at).toLocaleString('en-IN') : '—'}</p>
           <Button type="submit" disabled={paymentBusy}>{paymentBusy ? 'Saving…' : 'Save UPI Settings'}</Button>
+        </form>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Marketing Fee Payout Rate"
+          subtitle="Patient referrals ab marketing ki tarah treat hoti hain — partners jo Marketing Fee ROSKYRO ko pay karte hain, uska ye fixed % referring businesses (dr./clinic/hospital) ko periodic payout ke roop mein wapas jaata hai."
+        />
+        <form onSubmit={saveMarketingRate} className="px-5 pb-5 space-y-4">
+          <Input
+            label="Payout rate (%)"
+            type="number" min="0" max="100" step="0.5"
+            value={marketingRateForm}
+            onChange={(e) => setMarketingRateForm(e.target.value)}
+            required
+          />
+          <Button type="submit" disabled={marketingRateBusy}>{marketingRateBusy ? 'Saving…' : 'Save Payout Rate'}</Button>
         </form>
       </Card>
 
