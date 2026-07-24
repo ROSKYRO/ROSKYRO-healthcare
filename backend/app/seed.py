@@ -32,12 +32,12 @@ from app.config import ADMIN_EMAIL
 DEMO_PASSWORD = "Roskyro@123"
 
 # Partner category taxonomy -- the exact, curated list of categories a
-# healthcare business can list itself under to join the CONNECT referral
-# network. Two-level: a handful of broad groups (used for grouped <optgroup>
+# healthcare business can list itself under to join the Networking Marketing
+# referral network. Two-level: a handful of broad groups (used for grouped <optgroup>
 # dropdowns and the public marketing pages), each with specific leaf
 # categories a partner actually picks. This is the definitive, exhaustive
 # list -- not a superset of every possible service type -- per the
-# product decision behind CONNECT's "Verified Healthcare Service Partners"
+# product decision behind Networking Marketing's "Verified Healthcare Service Partners"
 # positioning.
 CATEGORY_GROUPS = [
     ("specialist_referrals", "👨‍⚕️ Specialist Referrals", [
@@ -54,20 +54,37 @@ CATEGORY_GROUPS = [
         ("psychiatrist", "Psychiatrist"),
         ("other_specialists", "Other Specialists"),
     ]),
-    ("diagnostics", "🧪 Diagnostics", [
+    # Merged "Diagnostics" + "Imaging" into one "Diagnostics & Imaging"
+    # group per the user's expanded category list -- old slugs
+    # (blood_test_labs, pathology_labs, home_sample_collection,
+    # xray_centers, usg_centers, ct_scan_centers, mri_centers) are kept
+    # unchanged since seed data below already references them; new
+    # categories from the expanded list are appended.
+    ("diagnostics_imaging", "🧪 Diagnostics & Imaging", [
         ("blood_test_labs", "Blood Test Labs"),
         ("pathology_labs", "Pathology Labs"),
+        ("diagnostic_centers", "Diagnostic Centers"),
         ("home_sample_collection", "Home Sample Collection"),
-    ]),
-    ("imaging", "🩻 Imaging", [
         ("xray_centers", "X-Ray Centers"),
-        ("usg_centers", "Ultrasound (USG) Centers"),
+        ("usg_centers", "Ultrasound / Sonography Centers"),
         ("ct_scan_centers", "CT Scan Centers"),
-        ("mri_centers", "MRI Centers"),
+        ("mri_centers", "MRI Scan Centers"),
+        ("pet_scan_centers", "PET Scan Centers"),
+        ("ecg_centers", "ECG Centers"),
+        ("eeg_centers", "EEG Centers"),
+        ("emg_ncv_centers", "EMG / NCV Centers"),
+        ("pft_centers", "Pulmonary Function Test (PFT) Centers"),
+        ("sleep_study_labs", "Sleep Study Labs"),
     ]),
-    ("rehabilitation", "🏃 Rehabilitation", [
+    # Renamed "Rehabilitation" -> "Rehabilitation & Therapy" and expanded
+    # with the additional therapy categories from the user's list.
+    ("rehabilitation_therapy", "🏃 Rehabilitation & Therapy", [
         ("physiotherapy_centers", "Physiotherapy Centers"),
         ("rehabilitation_centers", "Rehabilitation Centers"),
+        ("occupational_therapy_centers", "Occupational Therapy Centers"),
+        ("speech_therapy_centers", "Speech Therapy Centers"),
+        ("pain_management_clinics", "Pain Management Clinics"),
+        ("sports_injury_clinics", "Sports Injury Clinics"),
     ]),
     ("home_healthcare", "🏠 Home Healthcare", [
         ("physiotherapy_at_home", "Physiotherapy at Home"),
@@ -131,7 +148,7 @@ async def run():
             "sort_order": 2,
         },
         {
-            "_id": "connect", "name": "CONNECT", "tagline": "Join India's trusted healthcare business network.",
+            "_id": "connect", "name": "Networking Marketing", "tagline": "Join India's trusted healthcare business network.",
             "monthly_price": 4999, "yearly_price": 47990, "badge": None,
             "description": "The ROSKYRO Healthcare Referral & Partner Network — trusted partners, tracked referrals, configurable settlements.",
             "best_for": "Clinics, Hospitals, Labs & Healthcare Businesses",
@@ -141,7 +158,7 @@ async def run():
             "sort_order": 3,
         },
         {
-            "_id": "complete", "name": "ROSKYRO Complete", "tagline": "Everything in Grow + Manage + Connect",
+            "_id": "complete", "name": "ROSKYRO Complete", "tagline": "Everything in Grow + Manage + Networking Marketing",
             "monthly_price": 24999, "yearly_price": 239990, "badge": "Most Popular",
             "description": "Everything ROSKYRO offers, at a bundled price — one team, one dashboard, one bill.",
             "best_for": "Multi-speciality Clinics, Hospitals & Healthcare Groups",
@@ -303,7 +320,7 @@ async def run():
          {"name": "Ultrasound (Sonography)", "description": "", "price": 1200}],
     )
     clear_vision_eye = await make_partner(
-        # No dedicated ophthalmology category in the curated CONNECT
+        # No dedicated ophthalmology category in the curated Networking Marketing
         # taxonomy -- "Other Specialists" is the closest fit.
         "ClearVision Eye Hospital", "eye_hospital", "Mumbai", "other_specialists", True, True, "Same day consult",
         [{"name": "Comprehensive Eye Checkup", "description": "", "price": 500},
@@ -316,7 +333,7 @@ async def run():
     )
     pune_heart_care = await make_partner(
         # Replaces the old "Metro Ambulance Services" demo partner --
-        # ambulance/transport isn't part of the curated CONNECT category
+        # ambulance/transport isn't part of the curated Networking Marketing category
         # list, so this slot became a cardiology specialist instead
         # (keeps the same emergency/in-progress referral scenario below).
         "Pune Heart Care Centre", "specialist_clinic", "Pune", "cardiologist", True, False, "Same day",
@@ -343,7 +360,8 @@ async def run():
     })
 
     # -----------------------------------------------------------------
-    # Settlement rules — deliberately mixed: some 'none', some flat, some %
+    # Referral Bonus rules — deliberately mixed: some 'none', some flat rupee
+    # amounts. Percentage-based settlement has been removed entirely.
     # -----------------------------------------------------------------
     print("Seeding settlement rules...")
     platform_rule = {"_id": new_id(), "scope": "platform", "org_id": None, "partner_id": None, "category_id": None,
@@ -351,7 +369,7 @@ async def run():
                       "is_active": True, "created_by": team_ids["roskyro_admin"], "created_at": now()}
     await settlement_rules.insert_one(platform_rule)
     cityscan_rule = {"_id": new_id(), "scope": "partner", "org_id": None, "partner_id": cityscan_diagnostics["partner"]["_id"],
-                      "category_id": None, "settlement_type": "percentage", "flat_fee_amount": None, "percentage_rate": 10,
+                      "category_id": None, "settlement_type": "flat_fee", "flat_fee_amount": 150, "percentage_rate": None,
                       "custom_terms": None, "is_active": True, "created_by": team_ids["roskyro_admin"], "created_at": now()}
     await settlement_rules.insert_one(cityscan_rule)
     punelife_rule = {"_id": new_id(), "scope": "partner", "org_id": None, "partner_id": punelife_mri["partner"]["_id"],
@@ -450,25 +468,24 @@ async def run():
             if not rule:
                 rule = await settlement_rules.find_one({"scope": "platform"})
             if rule and rule["settlement_type"] != "none":
-                amount = 0
-                if rule["settlement_type"] == "flat_fee":
-                    amount = float(rule["flat_fee_amount"])
-                if rule["settlement_type"] == "percentage":
-                    amount = round(500 * (rule["percentage_rate"] / 100))
+                # Marketing Fee: a flat rupee amount only -- percentage-
+                # based settlement has been removed entirely. Owed by the
+                # PARTNER to ROSKYRO (patient referral = marketing the
+                # referring business did for the partner).
+                amount = float(rule["flat_fee_amount"]) if rule["settlement_type"] == "flat_fee" else 0
                 # Demo the two-sided confirmation states: Kavita Iyer's
-                # settlement is seeded with the referring business (Vital
-                # Skin) already having clicked "I've Paid," so the partner
-                # (CityScan Diagnostics) has a live "Confirm Received"
-                # action to click in the demo -- every other seeded
-                # settlement is untouched (fully pending, neither side
-                # has acted).
+                # settlement is seeded with the partner (CityScan
+                # Diagnostics) already having clicked "I've Paid ROSKYRO,"
+                # so ROSKYRO internal has a live "Confirm Received" action
+                # to click in the demo -- every other seeded settlement is
+                # untouched (fully pending, neither side has acted).
                 payer_claimed = spec["patient"] == "Kavita Iyer"
                 await settlements.insert_one({
                     "_id": new_id(), "referral_id": referral_id, "rule_id": rule["_id"], "org_id": spec["from"]["_id"],
                     "partner_id": partner_id, "settlement_type": rule["settlement_type"], "amount": amount,
                     "status": "pending", "paid_at": None,
                     "payer_marked_paid_at": (now() - timedelta(hours=6)) if payer_claimed else None,
-                    "confirmed_by": None,
+                    "confirmed_by": None, "included_in_payout_id": None,
                     "period_month": now().strftime("%Y-%m"), "created_at": now(),
                 })
 
