@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../lib/api';
-import { Card, Badge, PageLoading, Select, Input, EmptyState, Button } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
+import { canCreateReferrals } from '../../lib/referralRights';
+import { Card, Badge, PageLoading, Select, Input, EmptyState, Button, formatCurrency } from '../../components/ui';
 
 export default function PartnerDirectory() {
+  const { user } = useAuth();
   const [categories, setCategories] = useState([]);
   const [category, setCategory] = useState('');
   const [q, setQ] = useState('');
@@ -20,7 +23,7 @@ export default function PartnerDirectory() {
     api.get('/partners', { params: { category: category || undefined, q: q || undefined } })
       .then((res) => setPartners(res.data.partners))
       .catch((err) => {
-        // Browsing the full directory needs the CONNECT plan (unlike free
+        // Browsing the full directory needs the Networking Marketing plan (unlike free
         // self-registration via "Become a Partner") — show an upgrade
         // prompt instead of letting the request crash the page.
         if (err?.response?.status === 402) {
@@ -30,16 +33,26 @@ export default function PartnerDirectory() {
       });
   }, [category, q]);
 
-  const sortedPartners = !partners ? null : sortBy === 'commission'
-    ? [...partners].sort((a, b) => (b.commission_rate_percentage ?? -1) - (a.commission_rate_percentage ?? -1))
+  const sortedPartners = !partners ? null : sortBy === 'bonus'
+    ? [...partners].sort((a, b) => (b.referral_bonus_amount ?? -1) - (a.referral_bonus_amount ?? -1))
     : partners;
+
+  if (!canCreateReferrals(user)) {
+    return (
+      <EmptyState
+        title="Your business type can't choose/create referrals."
+        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek Networking Marketing partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
+        action={<Link to="/app/become-partner"><Button size="sm">Become a Partner</Button></Link>}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Partner Directory</h1>
-          <p className="text-sm text-gray-500 mt-1">Trusted diagnostic labs, imaging centres, specialists and more — verified by ROSKYRO. Har partner apni commission khud set karta hai, jo yahan dikhti hai.</p>
+          <p className="text-sm text-gray-500 mt-1">Trusted diagnostic labs, imaging centres, specialists and more — verified by ROSKYRO. Har partner apna Marketing Fee (flat ₹ amount jo wo har referral par ROSKYRO ko pay karta hai) khud set karta hai, jo yahan dikhta hai — jitna zyada collection hoga, utna hi zyada aapka Marketing Fee Payout share bhi banega.</p>
         </div>
         <Link to="/app/become-partner" className="shrink-0 text-sm font-medium text-brand-700 border border-brand-200 bg-brand-50 rounded-lg px-3 py-2 hover:bg-brand-100">
           List your business — it's free →
@@ -64,15 +77,15 @@ export default function PartnerDirectory() {
         <Input placeholder="Search by name…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
         <Select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="max-w-xs">
           <option value="default">Sort: Recommended</option>
-          <option value="commission">Sort: Highest commission first</option>
+          <option value="bonus">Sort: Highest Marketing Fee first</option>
         </Select>
       </div>
 
       {!sortedPartners ? <PageLoading /> : locked ? (
         <EmptyState
-          title="Browsing the full Partner Directory needs the CONNECT plan."
+          title="Browsing the full Partner Directory needs the Networking Marketing plan."
           subtitle="You can still list your own business as a partner for free — other businesses will be able to find and refer to you either way."
-          action={<Link to="/app/plans"><Button size="sm">Activate CONNECT</Button></Link>}
+          action={<Link to="/app/plans"><Button size="sm">Activate Networking Marketing</Button></Link>}
         />
       ) : sortedPartners.length === 0 ? (
         <EmptyState title="No partners found." subtitle="Try a different category or search term." />
@@ -92,12 +105,12 @@ export default function PartnerDirectory() {
                 {p.rating_avg > 0 && <span>★ {p.rating_avg}</span>}
               </div>
               <p className="text-sm text-gray-500 mt-2">{p.turnaround_time || 'Turnaround time not set'}</p>
-              {p.commission_rate_percentage != null ? (
+              {p.referral_bonus_amount != null ? (
                 <p className="text-sm font-semibold text-brand-700 mt-3">
-                  💰 {p.commission_rate_percentage}% commission per referral
+                  💰 {formatCurrency(p.referral_bonus_amount)} Marketing Fee per referral
                 </p>
               ) : (
-                <p className="text-xs text-gray-400 mt-3">Commission rate not set by this partner yet</p>
+                <p className="text-xs text-gray-400 mt-3">Marketing Fee not set by this partner yet</p>
               )}
               <Link to="/app/referrals/new" className="text-sm text-brand-700 font-medium mt-3 inline-block">Refer a patient →</Link>
             </Card>

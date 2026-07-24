@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react';
 import api from '../../lib/api';
+import UpgradePrompt from '../../components/UpgradePrompt';
 import { Card, Table, Badge, Button, Input, PageLoading, formatDate, formatCurrency } from '../../components/ui';
 
 export default function Appointments() {
   const [appointments, setAppointments] = useState(null);
+  const [blocked, setBlocked] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ patientName: '', doctorName: '', appointmentDate: '', appointmentTime: '', revenueAmount: '', isNewPatient: false });
+  const [pdfDate, setPdfDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
 
   function load() {
-    api.get('/appointments').then((res) => setAppointments(res.data.appointments));
+    api.get('/appointments').then((res) => setAppointments(res.data.appointments)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
   }
 
   useEffect(load, []);
@@ -21,6 +26,27 @@ export default function Appointments() {
     load();
   }
 
+  async function downloadDailyPdf() {
+    setPdfBusy(true);
+    setPdfError('');
+    try {
+      const res = await api.get('/appointments/daily-pdf', { params: { date: pdfDate }, responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `paid-appointments-${pdfDate}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setPdfError('Could not generate the PDF. Please try again.');
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
+  if (blocked) return <UpgradePrompt pillar="manage" />;
   if (!appointments) return <PageLoading />;
 
   return (
@@ -32,6 +58,17 @@ export default function Appointments() {
         </div>
         <Button onClick={() => setShowForm((s) => !s)}>{showForm ? 'Close' : '+ New Appointment'}</Button>
       </div>
+
+      <Card className="p-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <Input label="Date" type="date" value={pdfDate} onChange={(e) => setPdfDate(e.target.value)} className="max-w-xs" />
+          <Button variant="secondary" onClick={downloadDailyPdf} disabled={pdfBusy}>
+            {pdfBusy ? 'Generating…' : '⬇ Download Paid Appointments PDF'}
+          </Button>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">Downloads a PDF of that day's paid appointment bookings.</p>
+        {pdfError && <p className="text-sm text-rose-600 mt-2">{pdfError}</p>}
+      </Card>
 
       {showForm && (
         <Card className="p-5">

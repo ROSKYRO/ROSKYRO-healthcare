@@ -4,6 +4,12 @@ import { useAuth } from '../../context/AuthContext';
 import PricingCards from '../../components/PricingCards';
 import { Card, Badge, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
 
+// Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
+// 'connect' now displays as "Networking Marketing" -- a plain .toUpperCase()
+// on the code would still read "CONNECT", so badges built from a pillar
+// code go through this map instead.
+const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing' };
+
 function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
   const [copied, setCopied] = useState(false);
   const price = cycle === 'yearly' ? plan.yearly_price : plan.monthly_price;
@@ -114,7 +120,7 @@ export default function Plans() {
         </div>
         <div className="flex flex-wrap gap-2">
           {mine.activePillars.length === 0 && <span className="text-sm text-gray-400">No pillar active yet — pick one below to get started.</span>}
-          {mine.activePillars.map((p) => <Badge key={p} tone="verified">{p.toUpperCase()} active</Badge>)}
+          {mine.activePillars.map((p) => <Badge key={p} tone="verified">{PILLAR_DISPLAY_NAMES[p] || p.toUpperCase()} active</Badge>)}
         </div>
       </Card>
 

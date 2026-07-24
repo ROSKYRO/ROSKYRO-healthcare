@@ -1,79 +1,170 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 import UpgradePrompt from '../../components/UpgradePrompt';
-import { Card, CardHeader, Table, Badge, Button, PageLoading, formatCurrency, formatDate, formatDateTime } from '../../components/ui';
+import { Card, CardHeader, Table, Badge, Input, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
+
+function PayoutAccountSettings({ org, onSaved }) {
+  const [upiId, setUpiId] = useState(org.marketing_payout_upi_id || '');
+  const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setSaved(false);
+    try {
+      await api.patch(`/orgs/${org.id}`, { marketingPayoutUpiId: upiId.trim() });
+      setSaved(true);
+      onSaved();
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Payout Account"
+        subtitle="Jahan ROSKYRO aapka Marketing Fee Payout (har period ka fixed % share) bhejega."
+      />
+      <form onSubmit={save} className="px-5 pb-5 space-y-4">
+        <Input
+          label="Payout UPI ID"
+          value={upiId}
+          onChange={(e) => setUpiId(e.target.value)}
+          placeholder="yourbusiness@okhdfcbank"
+          required
+        />
+        <div className="flex items-center gap-3">
+          <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save Payout UPI'}</Button>
+          {saved && <span className="text-sm text-emerald-600 font-medium">Saved ✓</span>}
+        </div>
+        {!org.marketing_payout_upi_id && (
+          <p className="text-xs text-rose-500">
+            Abhi tak koi payout UPI ID set nahi hai — jab tak set nahi karoge, ROSKYRO aapko Marketing Fee Payout
+            nahi bhej payega.
+          </p>
+        )}
+      </form>
+    </Card>
+  );
+}
 
 export default function CustomerSettlements() {
+  const { user } = useAuth();
   const [settlements, setSettlements] = useState(null);
+  const [payouts, setPayouts] = useState(null);
+  const [rate, setRate] = useState(null);
+  const [org, setOrg] = useState(null);
   const [blocked, setBlocked] = useState(false);
-  const [busyId, setBusyId] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
 
   const load = useCallback(() => {
-    api.get('/settlements')
-      .then((res) => setSettlements(res.data.settlements))
+    Promise.all([
+      api.get('/settlements'),
+      api.get('/settlements/marketing-payouts'),
+      api.get('/settlements/marketing-fee-rate'),
+      api.get(`/orgs/${user.orgId}`),
+    ])
+      .then(([s, p, r, o]) => {
+        setSettlements(s.data.settlements);
+        setPayouts(p.data.payouts);
+        setRate(r.data.percentage);
+        setOrg(o.data.organization);
+      })
       .catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
-  }, []);
+  }, [user.orgId]);
 
   useEffect(load, [load]);
 
-  async function markPaid(id) {
-    setBusyId(id);
+  async function downloadInvoice(payout) {
+    setDownloadingId(payout.id);
     try {
-      await api.post(`/settlements/${id}/mark-paid`);
-      load();
+      const res = await api.get(`/settlements/marketing-payouts/${payout.id}/invoice`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${payout.invoice_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
     } finally {
-      setBusyId(null);
+      setDownloadingId(null);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="connect" />;
-  if (!settlements) return <PageLoading />;
+  if (!settlements || !payouts || rate == null || !org) return <PageLoading />;
 
-  const pendingTotal = settlements.filter((s) => s.status === 'pending').reduce((sum, s) => sum + Number(s.amount), 0);
+  const totalFeesGenerated = settlements.reduce((sum, s) => sum + Number(s.amount), 0);
+  const totalReceived = payouts.filter((p) => p.status === 'paid').reduce((sum, p) => sum + Number(p.payout_amount), 0);
+  const pendingPayout = payouts.filter((p) => p.status === 'pending').reduce((sum, p) => sum + Number(p.payout_amount), 0);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Referral Commission</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Marketing Fee Earnings</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Jab aap kisi ROSKYRO CONNECT partner ko refer karte hain aur us par commission bantа hai, to wo commission
-          seedha aapki business se partner ko jaata hai — ROSKYRO koi payment handle nahi karta, sirf connect karta hai.
-          Partner ki UPI ID par direct pay karke yahan "I've Paid" click karein — lekin status "Paid" tabhi banega jab
-          partner khud confirm karega ki unhe paisa mil gaya hai. Tab tak status "Pending" hi rahega.
+          Jab aap kisi ROSKYRO Networking Marketing partner ko patient refer karte hain, to ise us partner ke liye aapki taraf se
+          ki gayi marketing maana jaata hai. Partner is referral ka Marketing Fee (flat ₹ amount) seedha ROSKYRO ko
+          pay karta hai — aapko kuch pay nahi karna. Badle mein, ROSKYRO har period (month) collect hui Marketing
+          Fees ka ek fixed <span className="font-semibold">{rate}%</span> aapko wapas deta hai, ek Marketing Fee
+          Payout ke roop mein, seedha aapki payout UPI ID par — har payout ke saath ek invoice bhi milta hai.
         </p>
       </div>
 
-      <Card className="p-5">
-        <p className="text-sm text-gray-500">Pending commission you owe partners</p>
-        <p className="text-2xl font-bold text-gray-900">{formatCurrency(pendingTotal)}</p>
+      <div className="grid md:grid-cols-3 gap-5">
+        <Card className="p-5">
+          <p className="text-sm text-gray-500">Total Marketing Fees generated (all-time)</p>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalFeesGenerated)}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-sm text-gray-500">Received from ROSKYRO so far</p>
+          <p className="text-2xl font-bold text-emerald-700">{formatCurrency(totalReceived)}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-sm text-gray-500">Pending payout (generated, not yet paid)</p>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(pendingPayout)}</p>
+        </Card>
+      </div>
+
+      <PayoutAccountSettings org={org} onSaved={load} />
+
+      <Card>
+        <CardHeader title="Marketing Fee Payouts" subtitle="ROSKYRO se mile (ya milne wale) periodic payouts, invoice ke saath." />
+        <Table
+          rows={payouts}
+          emptyMessage="Abhi tak koi payout generate nahi hua. ROSKYRO team period-end par isko generate karti hai."
+          columns={[
+            { key: 'period', header: 'Period' },
+            { key: 'referral_count', header: 'Referrals' },
+            { key: 'total_fees_collected', header: 'Fees Collected', render: (r) => formatCurrency(r.total_fees_collected) },
+            { key: 'payout_percentage', header: 'Rate', render: (r) => `${r.payout_percentage}%` },
+            { key: 'payout_amount', header: 'Payout Amount', render: (r) => formatCurrency(r.payout_amount) },
+            { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
+            { key: 'invoice_number', header: 'Invoice', render: (r) => (
+              <Button size="sm" variant="secondary" disabled={downloadingId === r.id} onClick={() => downloadInvoice(r)}>
+                {downloadingId === r.id ? 'Downloading…' : `⬇ ${r.invoice_number}`}
+              </Button>
+            ) },
+          ]}
+        />
       </Card>
 
       <Card>
-        <CardHeader title="Settlements" subtitle="Har referral ke baad, agar koi settlement rule set hai, to yahan record ban jaata hai." />
+        <CardHeader title="Referral Fee Activity" subtitle="Har referral ke completion par partner ne kitna Marketing Fee ROSKYRO ko owe kiya — informational, aapki taraf se koi action nahi chahiye." />
         <Table
           rows={settlements}
-          emptyMessage="Koi settlement abhi tak nahi bana."
+          emptyMessage="Koi Marketing Fee record abhi tak nahi bana."
           columns={[
             { key: 'referral_code', header: 'Referral' },
             { key: 'partner_org_name', header: 'Partner' },
-            { key: 'partner_payout_upi_id', header: 'Pay partner at (UPI)', render: (r) => r.partner_payout_upi_id
-              ? <span className="font-mono text-xs text-gray-700">{r.partner_payout_upi_id}</span>
-              : <span className="text-xs text-rose-500">Partner ne abhi UPI set nahi ki</span> },
-            { key: 'settlement_type', header: 'Type', render: (r) => <Badge tone="slate">{r.settlement_type.replace(/_/g, ' ')}</Badge> },
-            { key: 'amount', header: 'Amount', render: (r) => formatCurrency(r.amount) },
-            { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
+            { key: 'amount', header: 'Marketing Fee', render: (r) => formatCurrency(r.amount) },
+            { key: 'status', header: 'Partner → ROSKYRO Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
             { key: 'created_at', header: 'Date', render: (r) => formatDate(r.created_at) },
-            { key: 'actions', header: '', render: (r) => {
-              if (r.status === 'paid') return null;
-              if (r.payer_marked_paid_at) {
-                return (
-                  <span className="text-xs text-amber-700" title={`You marked this paid on ${formatDateTime(r.payer_marked_paid_at)}`}>
-                    Waiting for partner to confirm receipt
-                  </span>
-                );
-              }
-              return <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>I've Paid — Mark Paid</Button>;
-            } },
           ]}
         />
       </Card>

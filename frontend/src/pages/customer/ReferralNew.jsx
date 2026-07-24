@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import api from '../../lib/api';
-import { Card, Button, Input, Select, Textarea } from '../../components/ui';
+import { useAuth } from '../../context/AuthContext';
+import { canCreateReferrals } from '../../lib/referralRights';
+import { Card, Button, Input, Select, Textarea, EmptyState } from '../../components/ui';
 
 export default function ReferralNew() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [categories, setCategories] = useState([]);
   const [category, setCategory] = useState('');
   const [city, setCity] = useState('');
@@ -46,6 +49,16 @@ export default function ReferralNew() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (!canCreateReferrals(user)) {
+    return (
+      <EmptyState
+        title="Your business type can't create referrals."
+        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek Networking Marketing partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
+        action={<Link to="/app/become-partner"><Button size="sm">Become a Partner</Button></Link>}
+      />
+    );
   }
 
   return (
