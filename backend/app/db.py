@@ -25,6 +25,12 @@ referral_followups = db["referral_followups"]
 settlement_rules = db["settlement_rules"]
 settlements = db["settlements"]
 statements = db["statements"]
+# Periodic (monthly) payouts ROSKYRO makes to a referring business, equal to
+# a fixed % of the Marketing Fees collected from partners on that
+# business's completed referrals during the period. See
+# app/routers/settlements.py's marketing-fee-report / marketing-payouts
+# endpoints.
+marketing_payouts = db["marketing_payouts"]
 appointments = db["appointments"]
 reviews = db["reviews"]
 marketing_performance = db["marketing_performance"]
