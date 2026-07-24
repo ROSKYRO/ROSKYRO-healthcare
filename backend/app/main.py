@@ -89,6 +89,18 @@ async def bootstrap_super_admin():
     await sync_super_admin()
 
 
+@app.on_event("startup")
+async def ensure_db_indexes():
+    """Runs on every boot, mock DB or real -- see app/db_indexes.py. Without
+    this, every query that filters by anything other than `_id` (org_id,
+    email, referral_id, partner_id, ...) forces MongoDB to scan the entire
+    collection, which gets steadily slower as real data accumulates.
+    `create_index` is idempotent, so repeating this on every boot is safe
+    and cheap once the indexes already exist."""
+    from app.db_indexes import ensure_indexes
+    await ensure_indexes()
+
+
 app.include_router(auth.router)
 app.include_router(orgs.router)
 app.include_router(partners.router)
