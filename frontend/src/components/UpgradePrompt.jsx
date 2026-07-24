@@ -4,7 +4,7 @@ import { Card, Button } from './ui';
 const PILLAR_INFO = {
   grow: { emoji: '\u{1F680}', name: 'GROW', price: '14,999', tagline: 'AI Visibility, Reviews, SEO, Social Media & Content — all managed for you.' },
   manage: { emoji: '\u{2699}\u{FE0F}', name: 'MANAGE', price: '9,999', tagline: 'Patient CRM, Appointments, Queue, Billing & WhatsApp — run your business without the chaos.' },
-  connect: { emoji: '\u{1F91D}', name: 'CONNECT', price: '4,999', tagline: 'A verified network of trusted healthcare partners, with tracked referrals.' },
+  connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', price: '4,999', tagline: 'A verified network of trusted healthcare partners, with tracked referrals.' },
 };
 
 export default function UpgradePrompt({ pillar }) {

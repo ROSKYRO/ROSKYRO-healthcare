@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { canCreateReferrals } from '../lib/referralRights';
 import clsx from 'clsx';
 import logo from '../assets/logo.png';
 
@@ -21,14 +22,18 @@ const NAV = {
     { to: '/app/billing', label: 'Billing', icon: '\u{1F9FE}', pillar: 'manage' },
     { to: '/app/whatsapp', label: 'WhatsApp', icon: '\u{1F4AC}', pillar: 'manage' },
     { to: '/app/booking', label: 'Online Booking (QR)', icon: '\u{1F4F1}', pillar: 'manage' },
-    { section: 'CONNECT', pillar: 'connect' },
-    // Listing yourself as a CONNECT partner is always free, regardless of
+    { section: 'Networking Marketing', pillar: 'connect' },
+    // Listing yourself as a Networking Marketing partner is always free, regardless of
     // subscription -- so this item deliberately has no `pillar`, unlike the
-    // rest of the CONNECT section below it.
+    // rest of the Networking Marketing section below it.
     { to: '/app/become-partner', label: 'Become a Partner', icon: '\u{1F195}' },
-    { to: '/app/referrals', label: 'Referral Network', icon: '\u{1F91D}', pillar: 'connect' },
-    { to: '/app/partners', label: 'Partner Directory', icon: '\u{1F4D1}', pillar: 'connect' },
-    { to: '/app/settlements', label: 'Referral Commission', icon: '\u{1F4B0}', pillar: 'connect' },
+    // Choosing/creating a referral is restricted to certain business types
+    // (Clinic, Hospital, Eye Hospital) -- see lib/referralRights.js. Other
+    // business types can list themselves as a partner above, but these two
+    // items are hidden for them since there's nothing for them to do here.
+    { to: '/app/referrals', label: 'Referral Network', icon: '\u{1F91D}', pillar: 'connect', requiresReferralRights: true },
+    { to: '/app/partners', label: 'Partner Directory', icon: '\u{1F4D1}', pillar: 'connect', requiresReferralRights: true },
+    { to: '/app/settlements', label: 'Marketing Fee Earnings', icon: '\u{1F4B0}', pillar: 'connect', requiresReferralRights: true },
     { section: null },
     { to: '/app/approvals', label: 'Pending Approvals', icon: '\u{2705}' },
     { to: '/app/team', label: 'My Team', icon: '\u{1F465}' },
@@ -37,7 +42,7 @@ const NAV = {
   partner: [
     { to: '/partner', label: 'Dashboard', icon: '\u{1F3E0}', end: true },
     { to: '/partner/requests', label: 'Referral Requests', icon: '\u{1F4E5}' },
-    { to: '/partner/settlements', label: 'Settlements', icon: '\u{1F4B0}' },
+    { to: '/partner/wallet', label: 'Wallet', icon: '\u{1F4B0}' },
   ],
   internal: [
     { to: '/team', label: 'Team Dashboard', icon: '\u{1F3E2}', end: true },
@@ -46,6 +51,7 @@ const NAV = {
     { to: '/team/organizations', label: 'Businesses', icon: '\u{1F3E5}' },
     { to: '/team/partner-verification', label: 'Partner Verification', icon: '\u{1F510}' },
     { to: '/team/settlements', label: 'Settlements', icon: '\u{1F4B0}' },
+    { to: '/team/marketing-payouts', label: 'Marketing Fee Payouts', icon: '\u{1F4E4}' },
     { to: '/team/roster', label: 'Team Roster', icon: '\u{1F465}' },
     // Super-admin only — pricing & UPI payment settings live behind this,
     // never shown to other internal roles (ops/growth/content/etc).
@@ -57,6 +63,12 @@ const NAV = {
   ],
 };
 
+// Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
+// 'connect' now displays as "Networking Marketing" everywhere in the UI --
+// a plain .toUpperCase() on the code would still read "CONNECT", so any
+// display string built from a pillar code goes through this map instead.
+const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing' };
+
 const SHELL_LABEL = {
   customer: 'Business Dashboard',
   partner: 'Partner Portal',
@@ -66,7 +78,11 @@ const SHELL_LABEL = {
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const items = (NAV[user.appShell] || []).filter((item) => !item.roles || item.roles.includes(user.role));
+  const items = (NAV[user.appShell] || []).filter((item) => {
+    if (item.roles && !item.roles.includes(user.role)) return false;
+    if (item.requiresReferralRights && !canCreateReferrals(user)) return false;
+    return true;
+  });
   const activePillars = user.activePillars || [];
 
   return (
@@ -99,7 +115,7 @@ export default function Layout({ children }) {
                   key={item.to}
                   to="/app/plans"
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-brand-400 hover:bg-white/5"
-                  title={`Activate ${item.pillar.toUpperCase()} to unlock`}
+                  title={`Activate ${PILLAR_DISPLAY_NAMES[item.pillar] || item.pillar.toUpperCase()} to unlock`}
                 >
                   <span className="text-base opacity-50">{item.icon}</span>
                   <span className="flex-1">{item.label}</span>
