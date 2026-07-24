@@ -4,7 +4,7 @@
 export const FAQS = [
   {
     q: 'What is ROSKYRO?',
-    a: 'ROSKYRO is an AI + Human operating system for healthcare businesses — doctors, clinics, hospitals, diagnostic labs, imaging centers and more. It is built around three subscriptions you can take separately or together: GROW (get more patients), MANAGE (run your day-to-day operations) and CONNECT (a verified healthcare partner network).',
+    a: 'ROSKYRO is an AI + Human operating system for healthcare businesses — doctors, clinics, hospitals, diagnostic labs, imaging centers and more. It is built around three subscriptions you can take separately or together: GROW (get more patients), MANAGE (run your day-to-day operations) and Networking Marketing (a verified healthcare partner network).',
   },
   {
     q: 'How does AI Visibility work?',
@@ -40,15 +40,15 @@ export const FAQS = [
   },
   {
     q: 'How much does ROSKYRO cost?',
-    a: 'GROW, MANAGE and CONNECT are each priced separately as monthly subscriptions, so you only pay for what you actually use — see the full breakdown on our Pricing page. Bundling all three as the Complete Platform saves you money versus paying separately, and an annual plan saves further.',
+    a: 'GROW, MANAGE and Networking Marketing are each priced separately as monthly subscriptions, so you only pay for what you actually use — see the full breakdown on our Pricing page. Bundling all three as the Complete Platform saves you money versus paying separately, and an annual plan saves further.',
   },
   {
     q: 'Do I need any technical knowledge to use ROSKYRO?',
     a: 'No. ROSKYRO is built for healthcare business owners with little or no technical background — if you can run your practice, you can run ROSKYRO. You never write a prompt or touch a technical setting; you approve results and our team + AI handle the rest.',
   },
   {
-    q: 'How does the CONNECT referral network work?',
-    a: 'CONNECT lets you refer patients to (or receive referrals from) a verified network of specialists, diagnostic labs, imaging centers, rehabilitation providers and home healthcare services. Listing your own business as a CONNECT partner is always free, and referral commission — if any — is paid directly between you and your partner; ROSKYRO never holds that money.',
+    q: 'How does the Networking Marketing referral network work?',
+    a: 'Networking Marketing lets you refer patients to (or receive referrals from) a verified network of specialists, diagnostic labs, imaging centers, rehabilitation providers and home healthcare services. Listing your own business as a Networking Marketing partner is always free. A patient referral is treated as marketing the referring business does for the partner: the partner pays ROSKYRO a Marketing Fee (a flat rupee amount, if any, never a percentage) for each completed referral, and ROSKYRO periodically pays a fixed percentage of that back to the referring business as a Marketing Fee Payout, with an invoice.',
   },
 ];
 
