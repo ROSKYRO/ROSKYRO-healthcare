@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from app.db import (
     referrals, referral_status_history, referral_documents, referral_followups,
     partners, organizations, partner_categories, users, settlement_rules,
-    settlements, partner_services, whatsapp_messages,
+    settlements, whatsapp_messages,
 )
 from app.auth import get_current_user
 from app.utils.plans import require_plan
@@ -17,6 +17,12 @@ router = APIRouter(
     tags=["referrals"],
     dependencies=[Depends(get_current_user), Depends(require_plan("connect"))],
 )
+
+# Only these business types have the right to choose/create a referral to a
+# partner. Everyone else (diagnostic_lab, dental, skin_clinic, physiotherapy)
+# can still list themselves as a Networking Marketing partner to be chosen by others, but
+# cannot initiate a referral of their own -- see create_referral below.
+REFERRAL_CREATOR_BUSINESS_TYPES = {"clinic", "hospital", "eye_hospital"}
 
 # Referral status machine — mirrors the HREN workflow: Patient Needs Service
 # -> Doctor Creates Referral -> System Generates Referral -> (ROSKYRO Review,
@@ -65,7 +71,14 @@ async def _notify_patient_whatsapp(referral: dict, event: str) -> dict | None:
     back on the referral detail view for both the referring business and
     the partner to see exactly what the patient was told, and when.
     Silently skips (returns None) if there's no patient_phone on file --
-    never blocks the referral flow itself."""
+    never blocks the referral flow itself.
+
+    Every patient-facing message is branded as ROSKYRO doing the
+    referring, never the specific business -- the referring business's
+    name/identity is intentionally never mentioned to the patient here
+    (it stays visible only inside the app, to the business's own staff
+    and to ROSKYRO internal, via referring_doctor_name/referring_org_name
+    on the referral detail views)."""
     if not referral.get("patient_phone"):
         return None
     partner = await partners.find_one({"_id": referral["partner_id"]})
@@ -80,20 +93,21 @@ async def _notify_patient_whatsapp(referral: dict, event: str) -> dict | None:
 
     messages = {
         "sent": (
-            f"Hi {referral['patient_name']}, aapko {partner_name}{location_bit} refer kiya gaya hai "
-            f"({referral['service_requested']} ke liye).{contact_bit} Aapka referral code: {referral['referral_code']}."
+            f"Hi {referral['patient_name']}, ROSKYRO Health Network ki taraf se aapko {partner_name}{location_bit} "
+            f"ke paas refer kiya gaya hai ({referral['service_requested']} ke liye).{contact_bit} "
+            f"Aapka referral code: {referral['referral_code']}. Koi sawaal ho to ROSKYRO se sampark karein."
         ),
         "accepted": (
-            f"Hi {referral['patient_name']}, {partner_name} ne aapka referral accept kar liya hai."
-            f"{contact_bit or ' Details ke liye apne referring doctor se sampark karein.'}"
+            f"Hi {referral['patient_name']}, {partner_name} ne ROSKYRO Health Network se mila aapka referral "
+            f"accept kar liya hai.{contact_bit or ' Details ke liye ROSKYRO se sampark karein.'}"
         ),
         "report_uploaded": (
             f"Hi {referral['patient_name']}, {partner_name} ne aapki report taiyar kar di hai. "
-            f"Kripya apne referring doctor se sampark karein report review ke liye."
+            f"Kripya report review ke liye ROSKYRO se sampark karein."
         ),
         "completed": (
-            f"Hi {referral['patient_name']}, aapka referral ({referral['referral_code']}) {partner_name} ke saath "
-            f"complete ho gaya hai. Dhanyawaad!"
+            f"Hi {referral['patient_name']}, ROSKYRO Health Network dwara kiya gaya aapka referral "
+            f"({referral['referral_code']}) {partner_name} ke saath complete ho gaya hai. Dhanyawaad!"
         ),
     }
     message = messages.get(event)
@@ -228,6 +242,18 @@ class CreateReferralBody(BaseModel):
 async def create_referral(body: CreateReferralBody, current_user: dict = Depends(get_current_user)):
     if current_user["appShell"] != "customer":
         raise HTTPException(status_code=403, detail="Only a healthcare business user can create a referral.")
+
+    # Access control: only certain business types have the right to choose/
+    # create a referral to a partner. Everyone else can still list
+    # themselves as a partner (see routers/partners.py's register_partner,
+    # which is deliberately left unrestricted) -- they just can't initiate
+    # one of their own.
+    if current_user.get("businessType") not in REFERRAL_CREATOR_BUSINESS_TYPES:
+        raise HTTPException(
+            status_code=403,
+            detail="Your business type isn't eligible to create referrals. You can still list yourself as a "
+                   "Networking Marketing partner so other businesses can refer patients to you.",
+        )
 
     partner = await partners.find_one({"_id": body.partnerId})
     if not partner:
@@ -403,20 +429,21 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
             if rule:
                 break
         if rule and rule.get("settlement_type") != "none":
-            amount = 0
-            if rule["settlement_type"] == "flat_fee":
-                amount = float(rule.get("flat_fee_amount") or 0)
-            if rule["settlement_type"] == "percentage":
-                svc_cursor = partner_services.find({"partner_id": referral["partner_id"]}).sort("price", -1).limit(1)
-                svc_list = await svc_cursor.to_list(None)
-                base_price = float(svc_list[0]["price"]) if svc_list and svc_list[0].get("price") else 0
-                amount = round(base_price * float(rule.get("percentage_rate") or 0) / 100, 2)
+            # Marketing Fee: a flat rupee amount only -- no percentage-of-
+            # service-price calculation (see settlements.py, where
+            # "percentage" was removed as a valid settlement_type). Owed by
+            # the PARTNER to ROSKYRO (the referral is treated as marketing
+            # the referring business did for the partner) -- org_id is kept
+            # here purely for period-based attribution (which referring
+            # business generated this fee), not as who owes the money.
+            amount = float(rule.get("flat_fee_amount") or 0) if rule["settlement_type"] == "flat_fee" else 0
             await settlements.insert_one({
                 "_id": new_id(), "referral_id": referral_id, "rule_id": rule["_id"],
                 "org_id": referral["referring_org_id"], "partner_id": referral["partner_id"],
                 "settlement_type": rule["settlement_type"], "amount": amount,
                 "period_month": now().strftime("%Y-%m"), "status": "pending",
-                "paid_at": None, "payer_marked_paid_at": None, "confirmed_by": None, "created_at": now(),
+                "paid_at": None, "payer_marked_paid_at": None, "confirmed_by": None,
+                "included_in_payout_id": None, "created_at": now(),
             })
 
     # Notifications

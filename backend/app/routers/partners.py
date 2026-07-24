@@ -15,30 +15,31 @@ router = APIRouter(
     # is applied per-route below -- only to the endpoints that browse/search the paid
     # partner directory (list_partners, recommendations, get_partner). Categories,
     # self-registration ("Become a Partner"), viewing/editing your own partner profile,
-    # and internal verification must stay free of the CONNECT plan gate, since listing
+    # and internal verification must stay free of the Networking Marketing plan gate, since listing
     # yourself as a partner is free by design.
     dependencies=[Depends(get_current_user)],
 )
 
 
-async def _commission_rates_for(partner_ids: list[str]) -> dict:
-    """Each partner can self-declare the default commission (%) they pay a
-    referring business per completed referral (see `settlements.py`'s
-    `/my-rate` endpoint) -- this is just the 'partner' scope settlement
-    rule, the same one the referral-completion settlement engine already
-    resolves against (see routers/referrals.py). Surfaced here so the
-    partner directory can show it to businesses deciding who to partner
-    with, without duplicating the rate anywhere."""
+async def _referral_bonus_amounts_for(partner_ids: list[str]) -> dict:
+    """Each partner can self-declare the default Referral Bonus -- a flat
+    rupee amount, not a percentage -- they pay a referring business per
+    completed referral (see `settlements.py`'s `/my-rate` endpoint) --
+    this is just the 'partner' scope settlement rule, the same one the
+    referral-completion settlement engine already resolves against (see
+    routers/referrals.py). Surfaced here so the partner directory can show
+    it to businesses deciding who to partner with, without duplicating the
+    amount anywhere."""
     if not partner_ids:
         return {}
     rows = await settlement_rules.find({
         "scope": "partner", "partner_id": {"$in": partner_ids},
-        "is_active": True, "settlement_type": "percentage",
+        "is_active": True, "settlement_type": "flat_fee",
     }).to_list(None)
-    return {r["partner_id"]: r.get("percentage_rate") for r in rows}
+    return {r["partner_id"]: r.get("flat_fee_amount") for r in rows}
 
 
-async def _enrich_partner(p: dict, commission_rate: float | None = None) -> dict:
+async def _enrich_partner(p: dict, referral_bonus_amount: float | None = None) -> dict:
     org = await organizations.find_one({"_id": p["org_id"]})
     cat = await partner_categories.find_one({"_id": p.get("category_id")})
     out = to_out(p)
@@ -48,7 +49,7 @@ async def _enrich_partner(p: dict, commission_rate: float | None = None) -> dict
     out["logo_url"] = org.get("logo_url") if org else None
     out["category_name"] = cat.get("name") if cat else None
     out["category_slug"] = cat.get("slug") if cat else None
-    out["commission_rate_percentage"] = commission_rate
+    out["referral_bonus_amount"] = referral_bonus_amount
     return out
 
 
@@ -77,7 +78,7 @@ async def list_partners(
         filt["is_available_now"] = True
 
     rows = await partners.find(filt).to_list(None)
-    rate_map = await _commission_rates_for([p["_id"] for p in rows])
+    rate_map = await _referral_bonus_amounts_for([p["_id"] for p in rows])
     enriched = [await _enrich_partner(p, rate_map.get(p["_id"])) for p in rows]
 
     if city:
@@ -111,7 +112,7 @@ async def recommendations(category: str, city: str | None = None):
         return {"generatedBy": "ai_heuristic_v1", "note": "", "recommendations": []}
 
     rows = await partners.find({"category_id": cat["_id"]}).to_list(None)
-    rate_map = await _commission_rates_for([p["_id"] for p in rows])
+    rate_map = await _referral_bonus_amounts_for([p["_id"] for p in rows])
     scored = []
     for p in rows:
         org = await organizations.find_one({"_id": p["org_id"]})
@@ -136,7 +137,7 @@ async def recommendations(category: str, city: str | None = None):
         out["org_name"] = org.get("name") if org else None
         out["city"] = org.get("city") if org else None
         out["category_name"] = cat.get("name")
-        out["commission_rate_percentage"] = rate_map.get(p["_id"])
+        out["referral_bonus_amount"] = rate_map.get(p["_id"])
         out["ai_score"] = score
         scored.append(out)
 
@@ -151,7 +152,7 @@ async def recommendations(category: str, city: str | None = None):
 @router.get("/me")
 async def my_partner(current_user: dict = Depends(get_current_user)):
     # Looked up by org_id, not appShell -- a business can self-register as a
-    # free CONNECT partner from its regular customer-shell account (see
+    # free Networking Marketing partner from its regular customer-shell account (see
     # POST /register below), so a customer-shell user checking "did my
     # application go through / is it verified yet" needs this to work too,
     # not just partner-shell accounts managing an existing listing.
@@ -160,7 +161,7 @@ async def my_partner(current_user: dict = Depends(get_current_user)):
     p = await partners.find_one({"org_id": current_user["orgId"]})
     if not p:
         raise HTTPException(status_code=404, detail="Partner profile not found for this account.")
-    rate_map = await _commission_rates_for([p["_id"]])
+    rate_map = await _referral_bonus_amounts_for([p["_id"]])
     return {"partner": await _enrich_partner(p, rate_map.get(p["_id"]))}
 
 
@@ -178,8 +179,8 @@ async def get_partner(partner_id: str):
     out["phone"] = org.get("phone") if org else None
     out["email"] = org.get("email") if org else None
     out["logo_url"] = org.get("logo_url") if org else None
-    rate_map = await _commission_rates_for([partner_id])
-    out["commission_rate_percentage"] = rate_map.get(partner_id)
+    rate_map = await _referral_bonus_amounts_for([partner_id])
+    out["referral_bonus_amount"] = rate_map.get(partner_id)
     cat = await partner_categories.find_one({"_id": p.get("category_id")})
     out["category_name"] = cat.get("name") if cat else None
     out["category_slug"] = cat.get("slug") if cat else None
