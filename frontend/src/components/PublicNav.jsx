@@ -207,9 +207,9 @@ export function PublicFooter() {
             <FooterColumn title="Contact">
               <ul className="space-y-2.5 text-sm">
                 <li>+91 92441 66752</li>
-                <li>hello@roskyro.com</li>
+                <li>roskyroofficial@gmail.com</li>
                 <li>www.roskyro.com</li>
-                <li>Mumbai, Maharashtra, India</li>
+                <li>Chhattisgarh, India</li>
                 <li>Mon–Sat, 9:00 AM – 7:00 PM IST</li>
               </ul>
             </FooterColumn>
