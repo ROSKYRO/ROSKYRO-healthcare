@@ -9,8 +9,8 @@ import FaqList from '../components/FaqList';
 const PRICING_FAQS = [
   { q: 'Is there any contract?', a: 'No. Every ROSKYRO subscription is month-to-month by default (an annual plan is available at a discount). There is no long-term lock-in and no cancellation penalty.' },
   { q: 'Can I cancel anytime?', a: 'Yes, from your dashboard billing settings, effective at the end of your current billing cycle.' },
-  { q: 'Can I take just one pillar?', a: 'Yes — GROW, MANAGE and CONNECT are each priced and billed separately. Take one, two, or bundle all three as Complete Platform to save.' },
-  { q: 'What payment methods do you accept?', a: 'Subscriptions are paid to ROSKYRO directly via UPI. Referral commission under CONNECT, if any, is paid directly between you and your partner.' },
+  { q: 'Can I take just one pillar?', a: 'Yes — GROW, MANAGE and Networking Marketing are each priced and billed separately. Take one, two, or bundle all three as Complete Platform to save.' },
+  { q: 'What payment methods do you accept?', a: 'Subscriptions are paid to ROSKYRO directly via UPI. Under Networking Marketing, a partner pays ROSKYRO a flat-rupee Marketing Fee per completed referral, and ROSKYRO periodically pays a fixed percentage of that back to the referring business as a Marketing Fee Payout.' },
   { q: 'Is there a setup fee?', a: 'No hidden setup fee — onboarding and training are included in your subscription.' },
 ];
 

@@ -15,7 +15,7 @@ const PILLARS = [
     items: ['Appointment Management', 'Patient CRM', 'Billing', 'Patient Communication', 'Reports'],
   },
   {
-    code: 'connect', emoji: '\u{1F91D}', title: 'CONNECT', subtitle: "Grow Through India's Healthcare Network", price: '4,999',
+    code: 'connect', emoji: '\u{1F91D}', title: 'Networking Marketing', subtitle: "Grow Through India's Healthcare Network", price: '4,999',
     promise: '"Hum aapko trusted healthcare partners se jodte hain."',
     items: ['Referral Network', 'Diagnostic Partners', 'Imaging Centers', 'Rehab Partners', 'Home Healthcare'],
   },
@@ -78,7 +78,7 @@ export default function Landing() {
               <p className="text-sm font-semibold mt-1">Appointments, queue, billing</p>
             </div>
             <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-              <p className="text-xs text-brand-200">🤝 Connect</p>
+              <p className="text-xs text-brand-200">🤝 Networking Marketing</p>
               <p className="text-sm font-semibold mt-1">Referrals, partner network</p>
             </div>
           </div>
@@ -164,15 +164,15 @@ export default function Landing() {
           <div className="mt-20 border border-gray-200 rounded-2xl p-8 md:p-12">
             <div className="max-w-2xl mx-auto text-center">
               <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-brand-50 text-brand-700 rounded-full px-3 py-1 mb-4">
-                {'\u{1F91D}'} CONNECT
+                {'\u{1F91D}'} Networking Marketing
               </p>
               <h3 className="text-2xl font-bold text-gray-900">Verified Healthcare Service Partners</h3>
               <p className="mt-3 text-gray-600">
                 Connect with trusted specialists, diagnostic labs, imaging centers, rehabilitation providers, and home
-                healthcare services — all from one platform. Listing your business as a CONNECT partner is always
+                healthcare services — all from one platform. Listing your business as a Networking Marketing partner is always
                 free — every doctor, clinic and hospital chooses their own partners on their own terms.
               </p>
-              <Link to="/register" className="inline-block mt-4 text-brand-700 font-semibold text-sm">Join CONNECT for free →</Link>
+              <Link to="/register" className="inline-block mt-4 text-brand-700 font-semibold text-sm">Join Networking Marketing for free →</Link>
             </div>
           </div>
 
