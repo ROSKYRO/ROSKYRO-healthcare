@@ -52,7 +52,7 @@ const SECTIONS = [
   {
     heading: 'Contact Information',
     paragraphs: [
-      'Questions about this Privacy Policy can be sent to hello@roskyro.com or through our Contact Us page.',
+      'Questions about this Privacy Policy can be sent to roskyroofficial@gmail.com or through our Contact Us page.',
     ],
   },
 ];

@@ -28,7 +28,7 @@ const SECTIONS = [
   {
     heading: 'Contact Support',
     paragraphs: [
-      'To request a refund, contact us at hello@roskyro.com or through our Contact Us page with your account details and the reason for your request.',
+      'To request a refund, contact us at roskyroofficial@gmail.com or through our Contact Us page with your account details and the reason for your request.',
     ],
   },
 ];

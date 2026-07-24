@@ -52,13 +52,13 @@ const SECTIONS = [
   {
     heading: 'Governing Law (India)',
     paragraphs: [
-      'These Terms are governed by the laws of India. Any disputes arising from these Terms or use of ROSKYRO shall be subject to the exclusive jurisdiction of the courts of Mumbai, Maharashtra.',
+      'These Terms are governed by the laws of India. Any disputes arising from these Terms or use of ROSKYRO shall be subject to the exclusive jurisdiction of the courts of Chhattisgarh.',
     ],
   },
   {
     heading: 'Contact Details',
     paragraphs: [
-      'Questions about these Terms can be sent to hello@roskyro.com or through our Contact Us page.',
+      'Questions about these Terms can be sent to roskyroofficial@gmail.com or through our Contact Us page.',
     ],
   },
 ];
