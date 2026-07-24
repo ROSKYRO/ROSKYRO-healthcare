@@ -1,11 +1,14 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.db import settlement_rules, settlements, referrals, organizations, partners, statements
+from app.db import settlement_rules, settlements, referrals, organizations, partners, statements, platform_settings, marketing_payouts
 from app.auth import get_current_user, require_internal
 from app.utils.roles import is_internal
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now, to_out, to_out_many
+from app.utils.invoices import render_marketing_payout_invoice_pdf
 
 router = APIRouter(prefix="/api/settlements", tags=["settlements"], dependencies=[Depends(get_current_user)])
 
@@ -29,16 +32,18 @@ class RuleBody(BaseModel):
     categoryId: str | None = None
     settlementType: str
     flatFeeAmount: float | None = None
-    percentageRate: float | None = None
     customTerms: str | None = None
 
 
 @router.get("/my-rate")
 async def get_my_rate(current_user: dict = Depends(get_current_user)):
-    """A partner's own self-declared default commission (%) -- the 'partner'
-    scope settlement rule they set via PUT /my-rate below. Returns null if
-    they haven't set one yet (falls through to org/platform defaults per
-    the usual resolution order when a referral actually completes)."""
+    """A partner's own self-declared default Marketing Fee (flat rupees) --
+    the amount the partner pays ROSKYRO per completed referral sent to
+    them, treated as a marketing/lead-gen fee rather than a commission paid
+    to the referring business. This is the 'partner' scope settlement rule
+    they set via PUT /my-rate below. Returns null if they haven't set one
+    yet (falls through to org/platform defaults per the usual resolution
+    order when a referral actually completes)."""
     if current_user["appShell"] != "partner":
         raise HTTPException(status_code=403, detail="Partner accounts only.")
     p = await partners.find_one({"org_id": current_user["orgId"]})
@@ -48,28 +53,32 @@ async def get_my_rate(current_user: dict = Depends(get_current_user)):
     return {"rate": to_out(rule)}
 
 
-class CommissionRateBody(BaseModel):
-    percentageRate: float
+class ReferralBonusRateBody(BaseModel):
+    flatFeeAmount: float
 
 
 @router.put("/my-rate")
-async def set_my_rate(body: CommissionRateBody, current_user: dict = Depends(get_current_user)):
-    """Partners self-declare the default commission (%) they'll pay a
-    referring business per completed referral -- shown publicly in the
-    partner directory (see routers/partners.py's `_commission_rates_for`)
-    so businesses can compare partners and decide who to work with, per
-    "har partner apna commission show karta hai, use base par businesses
-    use apna partner banayenge." This creates/updates the 'partner' scope
-    settlement rule -- priority #2 in the org_partner_pair > partner > org
-    > platform resolution order that routers/referrals.py already uses
-    when a referral completes, so no separate resolution logic is needed.
-    ROSKYRO internal team can still negotiate a business-specific
-    org_partner_pair override on top of this via POST /rules, same as
-    before -- that still wins over a partner's own self-set default."""
+async def set_my_rate(body: ReferralBonusRateBody, current_user: dict = Depends(get_current_user)):
+    """Partners self-declare the default Marketing Fee (a flat rupee amount
+    -- percentage-of-service-price commission has been removed entirely)
+    they'll pay ROSKYRO per completed referral sent to them by a business
+    -- shown publicly in the partner directory so businesses can compare
+    partners and decide who to work with. Patient referrals are treated as
+    marketing the referring business does for the partner, so this fee is
+    paid to ROSKYRO (see mark-paid/confirm-received below), not directly to
+    the referring business -- ROSKYRO separately pays referring businesses
+    a periodic Marketing Fee Payout (a fixed % of fees collected) instead.
+    This creates/updates the 'partner' scope settlement rule -- priority #2
+    in the org_partner_pair > partner > org > platform resolution order
+    that routers/referrals.py already uses when a referral completes, so no
+    separate resolution logic is needed. ROSKYRO internal team can still
+    negotiate a business-specific org_partner_pair override on top of this
+    via POST /rules, same as before -- that still wins over a partner's own
+    self-set default."""
     if current_user["appShell"] != "partner":
         raise HTTPException(status_code=403, detail="Partner accounts only.")
-    if body.percentageRate < 0 or body.percentageRate > 100:
-        raise HTTPException(status_code=400, detail="Commission rate must be between 0 and 100.")
+    if body.flatFeeAmount < 0:
+        raise HTTPException(status_code=400, detail="Marketing Fee amount cannot be negative.")
 
     p = await partners.find_one({"org_id": current_user["orgId"]})
     if not p:
@@ -79,19 +88,19 @@ async def set_my_rate(body: CommissionRateBody, current_user: dict = Depends(get
     if existing:
         await settlement_rules.update_one(
             {"_id": existing["_id"]},
-            {"$set": {"settlement_type": "percentage", "percentage_rate": body.percentageRate, "updated_at": now()}},
+            {"$set": {"settlement_type": "flat_fee", "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None, "updated_at": now()}},
         )
         rule_id = existing["_id"]
     else:
         rule_id = new_id()
         await settlement_rules.insert_one({
             "_id": rule_id, "scope": "partner", "org_id": None, "partner_id": p["_id"], "category_id": None,
-            "settlement_type": "percentage", "flat_fee_amount": None, "percentage_rate": body.percentageRate,
+            "settlement_type": "flat_fee", "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None,
             "custom_terms": None, "is_active": True, "created_by": current_user["id"], "created_at": now(),
         })
 
     updated = await settlement_rules.find_one({"_id": rule_id})
-    await log_audit(current_user["id"], "settlement_rule.self_set", "settlement_rule", rule_id, {"percentageRate": body.percentageRate})
+    await log_audit(current_user["id"], "settlement_rule.self_set", "settlement_rule", rule_id, {"flatFeeAmount": body.flatFeeAmount})
     return {"rate": to_out(updated)}
 
 
@@ -99,13 +108,15 @@ async def set_my_rate(body: CommissionRateBody, current_user: dict = Depends(get
 async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_user)):
     if body.scope not in ("platform", "org", "partner", "org_partner_pair"):
         raise HTTPException(status_code=400, detail="Invalid scope.")
-    if body.settlementType not in ("none", "flat_fee", "percentage", "custom"):
+    # Percentage-based settlement has been removed entirely -- Referral
+    # Bonus is always a flat rupee amount (or "none"/"custom").
+    if body.settlementType not in ("none", "flat_fee", "custom"):
         raise HTTPException(status_code=400, detail="Invalid settlementType.")
 
     doc = {
         "_id": new_id(), "scope": body.scope, "org_id": body.orgId, "partner_id": body.partnerId,
         "category_id": body.categoryId, "settlement_type": body.settlementType,
-        "flat_fee_amount": body.flatFeeAmount, "percentage_rate": body.percentageRate,
+        "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None,
         "custom_terms": body.customTerms, "is_active": True,
         "created_by": current_user["id"], "created_at": now(),
     }
@@ -128,6 +139,9 @@ async def list_settlements(status: str | None = None, period: str | None = None,
     if period:
         filt["period_month"] = period
 
+    platform = await platform_settings.find_one({"_id": 1})
+    roskyro_upi_id = platform.get("upi_id") if platform else None
+
     rows = await settlements.find(filt).sort("created_at", -1).limit(300).to_list(None)
     out = []
     for s in rows:
@@ -139,42 +153,49 @@ async def list_settlements(status: str | None = None, period: str | None = None,
         item["referral_code"] = r.get("referral_code") if r else None
         item["org_name"] = ro.get("name") if ro else None
         item["partner_org_name"] = po.get("name") if po else None
-        item["partner_payout_upi_id"] = p.get("payout_upi_id") if p else None
+        # Marketing Fee is paid by the partner TO ROSKYRO, not to the
+        # referring business, so the relevant payout account here is
+        # ROSKYRO's own collection UPI ID (see /api/settings/payment).
+        item["roskyro_payout_upi_id"] = roskyro_upi_id
         out.append(item)
     return {"settlements": out}
 
 
 @router.post("/{settlement_id}/mark-paid")
 async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current_user)):
-    """ROSKYRO never moves this money. The referring business pays the
-    partner directly at the partner's payout UPI ID, outside the app, so
-    the referring org (the payer) is who self-reports it here.
+    """Patient Referral -> Marketing model: a completed referral is treated
+    as the referring business doing marketing for the partner (bringing
+    them a patient), so the per-referral Marketing Fee is owed by the
+    PARTNER, and it's paid straight to ROSKYRO -- not to the referring
+    business. So the partner (the payer) is who self-reports it here.
 
     This is a two-sided confirmation, not a one-click "paid" -- the payer
     clicking this only records their own claim (`payer_marked_paid_at`).
-    The settlement's `status` stays "pending" until the partner (the one
-    actually receiving the money) independently confirms receipt via
-    POST /{id}/confirm-received below. This prevents a business from
-    getting referral credit just by claiming payment without the partner
+    The settlement's `status` stays "pending" until ROSKYRO's internal team
+    (the one actually receiving the money) independently confirms receipt
+    via POST /{id}/confirm-received below. This prevents a partner from
+    getting Marketing Fee credit just by claiming payment without ROSKYRO
     ever actually receiving it.
 
-    ROSKYRO internal team is the one exception: an internal "mark paid"
-    is a dispute-resolution override (a business reported the payment
-    through support instead of using the app) and finalizes the
-    settlement immediately, bypassing the partner-confirmation step --
-    ROSKYRO staff are vouching for the payment having happened, not
-    self-reporting it."""
+    An internal "mark paid" is a dispute-resolution override (the partner
+    reported the payment through support instead of using the app) and
+    finalizes the settlement immediately, bypassing the separate
+    confirmation step -- ROSKYRO staff are vouching for the payment having
+    happened, not self-reporting it."""
     settlement = await settlements.find_one({"_id": settlement_id})
     if not settlement:
         raise HTTPException(status_code=404, detail="Settlement not found.")
 
-    is_payer_org = current_user["appShell"] == "customer" and current_user["orgId"] == settlement["org_id"]
-    if not is_payer_org and not is_internal(current_user["role"]):
-        raise HTTPException(status_code=403, detail="Only the referring business (who owes this commission) or the ROSKYRO team can mark it paid.")
+    is_payer_partner = current_user["appShell"] == "partner"
+    if is_payer_partner:
+        p = await partners.find_one({"org_id": current_user["orgId"]})
+        is_payer_partner = bool(p) and p["_id"] == settlement["partner_id"]
+    if not is_payer_partner and not is_internal(current_user["role"]):
+        raise HTTPException(status_code=403, detail="Only the partner (who owes this Marketing Fee) or the ROSKYRO team can mark it paid.")
 
-    if is_internal(current_user["role"]) and not is_payer_org:
-        # Dispute-resolution override: finalize immediately, no partner
-        # confirmation needed.
+    if is_internal(current_user["role"]) and not is_payer_partner:
+        # Dispute-resolution override: finalize immediately, no separate
+        # confirmation step needed.
         await settlements.update_one({"_id": settlement_id}, {"$set": {
             "status": "paid", "paid_at": now(),
             "payer_marked_paid_at": settlement.get("payer_marked_paid_at") or now(),
@@ -182,7 +203,7 @@ async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current
         }})
     else:
         if settlement.get("payer_marked_paid_at"):
-            raise HTTPException(status_code=400, detail="Already marked paid — waiting for the partner to confirm receipt.")
+            raise HTTPException(status_code=400, detail="Already marked paid — waiting for ROSKYRO to confirm receipt.")
         await settlements.update_one({"_id": settlement_id}, {"$set": {"payer_marked_paid_at": now()}})
 
     updated = await settlements.find_one({"_id": settlement_id})
@@ -192,25 +213,22 @@ async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current
 
 @router.post("/{settlement_id}/confirm-received")
 async def confirm_received(settlement_id: str, current_user: dict = Depends(get_current_user)):
-    """The other half of the two-sided confirmation: only the partner
-    actually receiving the commission (the payee) can confirm they got
-    it, and only after the payer has claimed they paid. Only this
-    confirmation finalizes the settlement to status "paid" -- until then
-    it stays "pending" no matter what the payer clicked, per the rule
-    that a payer's own claim is never enough on its own."""
+    """The other half of the two-sided confirmation: only ROSKYRO's
+    internal team, as the actual recipient of the Marketing Fee, can
+    confirm it was received, and only after the partner has claimed they
+    paid. Only this confirmation finalizes the settlement to status "paid"
+    -- until then it stays "pending" no matter what the payer clicked, per
+    the rule that a payer's own claim is never enough on its own."""
     settlement = await settlements.find_one({"_id": settlement_id})
     if not settlement:
         raise HTTPException(status_code=404, detail="Settlement not found.")
 
-    if current_user["appShell"] != "partner":
-        raise HTTPException(status_code=403, detail="Only the receiving partner can confirm receipt of commission.")
-    p = await partners.find_one({"org_id": current_user["orgId"]})
-    if not p or p["_id"] != settlement["partner_id"]:
-        raise HTTPException(status_code=403, detail="You can only confirm receipt of commission owed to your own partner profile.")
+    if not is_internal(current_user["role"]):
+        raise HTTPException(status_code=403, detail="Only the ROSKYRO team can confirm receipt of a Marketing Fee.")
     if settlement["status"] == "paid":
         raise HTTPException(status_code=400, detail="This settlement is already confirmed as paid.")
     if not settlement.get("payer_marked_paid_at"):
-        raise HTTPException(status_code=400, detail="The referring business hasn't marked this as paid yet — nothing to confirm.")
+        raise HTTPException(status_code=400, detail="The partner hasn't marked this as paid yet — nothing to confirm.")
 
     await settlements.update_one({"_id": settlement_id}, {"$set": {
         "status": "paid", "paid_at": now(), "confirmed_by": current_user["id"],
@@ -218,6 +236,195 @@ async def confirm_received(settlement_id: str, current_user: dict = Depends(get_
     updated = await settlements.find_one({"_id": settlement_id})
     await log_audit(current_user["id"], "settlement.confirmed_received", "settlement", settlement_id, {})
     return {"settlement": to_out(updated)}
+
+
+DEFAULT_MARKETING_FEE_PAYOUT_PERCENTAGE = 20.0
+
+
+async def _marketing_fee_payout_percentage() -> float:
+    platform = await platform_settings.find_one({"_id": 1})
+    if platform and platform.get("marketing_fee_payout_percentage") is not None:
+        return float(platform["marketing_fee_payout_percentage"])
+    return DEFAULT_MARKETING_FEE_PAYOUT_PERCENTAGE
+
+
+@router.get("/marketing-fee-rate")
+async def get_marketing_fee_rate():
+    """The fixed % of collected Marketing Fees that ROSKYRO pays back out
+    to a referring business, periodically, as a Marketing Fee Payout. Open
+    to any authenticated user (customer dashboards show this so a business
+    knows what cut they get back)."""
+    return {"percentage": await _marketing_fee_payout_percentage()}
+
+
+class MarketingFeeRateBody(BaseModel):
+    percentage: float
+
+
+@router.patch("/marketing-fee-rate", dependencies=[Depends(require_internal)])
+async def set_marketing_fee_rate(body: MarketingFeeRateBody, current_user: dict = Depends(get_current_user)):
+    if body.percentage < 0 or body.percentage > 100:
+        raise HTTPException(status_code=400, detail="Percentage must be between 0 and 100.")
+    await platform_settings.update_one(
+        {"_id": 1},
+        {"$set": {"marketing_fee_payout_percentage": body.percentage, "updated_at": now(), "updated_by": current_user["id"]}},
+        upsert=True,
+    )
+    await log_audit(current_user["id"], "settings.marketing_fee_rate_updated", "platform_settings", None, {"percentage": body.percentage})
+    return {"percentage": body.percentage}
+
+
+async def _marketing_report_row(org: dict, period: str, rate: float) -> dict:
+    """Every Marketing Fee collected from a partner (status: paid) whose
+    referral was attributed to this referring business, for the given
+    period, that hasn't already been folded into a finalized payout."""
+    matching = await settlements.find({
+        "org_id": org["_id"], "period_month": period, "status": "paid", "included_in_payout_id": None,
+    }).to_list(None)
+    total_collected = round(sum(float(s.get("amount") or 0) for s in matching), 2)
+    payout_amount = round(total_collected * rate / 100, 2)
+    existing_payout = await marketing_payouts.find_one({"org_id": org["_id"], "period": period})
+    return {
+        "org_id": org["_id"],
+        "org_name": org.get("name"),
+        "business_type": org.get("business_type"),
+        "referral_count": len(matching),
+        "total_fees_collected": total_collected,
+        "payout_percentage": rate,
+        "payout_amount": payout_amount,
+        "payout_account_upi_id": org.get("marketing_payout_upi_id"),
+        "payout_status": existing_payout.get("status") if existing_payout else ("not_generated" if total_collected > 0 else "nothing_collected"),
+        "payout_id": existing_payout.get("_id") if existing_payout else None,
+    }
+
+
+@router.get("/marketing-report", dependencies=[Depends(require_internal)])
+async def marketing_report(period: str = Query(..., description="YYYY-MM")):
+    """ROSKYRO admin view: the complete list of every referring business
+    that has generated at least one completed, Marketing-Fee-bearing
+    referral, with that business's own data shown separately -- referral
+    count, total Marketing Fees ROSKYRO collected because of them this
+    period, the fixed-% payout that's calculated for them, and the account
+    it should be sent to."""
+    rate = await _marketing_fee_payout_percentage()
+    org_ids = await settlements.distinct("org_id", {"period_month": period})
+    rows = []
+    for org_id in org_ids:
+        org = await organizations.find_one({"_id": org_id})
+        if not org:
+            continue
+        rows.append(await _marketing_report_row(org, period, rate))
+    rows.sort(key=lambda r: -r["total_fees_collected"])
+    return {"period": period, "payout_percentage": rate, "businesses": rows}
+
+
+class CreatePayoutBody(BaseModel):
+    orgId: str
+    period: str
+
+
+async def _next_invoice_number() -> str:
+    n = await marketing_payouts.count_documents({})
+    return f"MKT-INV-{str(n + 1).zfill(6)}"
+
+
+@router.post("/marketing-payouts", status_code=201, dependencies=[Depends(require_internal)])
+async def create_marketing_payout(body: CreatePayoutBody, current_user: dict = Depends(get_current_user)):
+    """Finalizes this period's Marketing Fee Payout for one referring
+    business: locks in the total collected, the rate, and the computed
+    amount, snapshots the business's payout account, and marks every
+    contributing settlement so it can never be double-counted into a later
+    payout run."""
+    org = await organizations.find_one({"_id": body.orgId})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    if await marketing_payouts.find_one({"org_id": body.orgId, "period": body.period}):
+        raise HTTPException(status_code=400, detail="A payout for this business and period already exists.")
+
+    rate = await _marketing_fee_payout_percentage()
+    matching = await settlements.find({
+        "org_id": body.orgId, "period_month": body.period, "status": "paid", "included_in_payout_id": None,
+    }).to_list(None)
+    total_collected = round(sum(float(s.get("amount") or 0) for s in matching), 2)
+    if total_collected <= 0:
+        raise HTTPException(status_code=400, detail="No collected Marketing Fees for this business in this period yet.")
+    payout_amount = round(total_collected * rate / 100, 2)
+
+    payout_id = new_id()
+    doc = {
+        "_id": payout_id, "invoice_number": await _next_invoice_number(),
+        "org_id": body.orgId, "org_name": org.get("name"), "period": body.period,
+        "referral_count": len(matching), "total_fees_collected": total_collected,
+        "payout_percentage": rate, "payout_amount": payout_amount,
+        "payout_account_upi_id": org.get("marketing_payout_upi_id"),
+        "status": "pending", "paid_at": None,
+        "created_by": current_user["id"], "created_at": now(),
+    }
+    await marketing_payouts.insert_one(doc)
+    await settlements.update_many(
+        {"_id": {"$in": [s["_id"] for s in matching]}},
+        {"$set": {"included_in_payout_id": payout_id}},
+    )
+    await log_audit(current_user["id"], "marketing_payout.created", "marketing_payout", payout_id, {"orgId": body.orgId, "period": body.period, "amount": payout_amount})
+    return {"payout": to_out(doc)}
+
+
+@router.get("/marketing-payouts")
+async def list_marketing_payouts(orgId: str | None = None, period: str | None = None, current_user: dict = Depends(get_current_user)):
+    filt: dict = {}
+    if current_user["appShell"] == "customer":
+        filt["org_id"] = current_user["orgId"]
+    elif not is_internal(current_user["role"]):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+    elif orgId:
+        filt["org_id"] = orgId
+    if period:
+        filt["period"] = period
+    rows = await marketing_payouts.find(filt).sort("created_at", -1).to_list(None)
+    return {"payouts": to_out_many(rows)}
+
+
+@router.patch("/marketing-payouts/{payout_id}/mark-paid", dependencies=[Depends(require_internal)])
+async def mark_marketing_payout_paid(payout_id: str, current_user: dict = Depends(get_current_user)):
+    """ROSKYRO internal marks a Marketing Fee Payout as sent, once the UPI
+    transfer to the referring business has actually been made outside the
+    app -- same self-reported, ROSKYRO-vouches-for-it pattern used for the
+    internal override on per-referral settlements above."""
+    payout = await marketing_payouts.find_one({"_id": payout_id})
+    if not payout:
+        raise HTTPException(status_code=404, detail="Payout not found.")
+    if payout["status"] == "paid":
+        raise HTTPException(status_code=400, detail="This payout is already marked paid.")
+    await marketing_payouts.update_one({"_id": payout_id}, {"$set": {"status": "paid", "paid_at": now(), "paid_by": current_user["id"]}})
+    updated = await marketing_payouts.find_one({"_id": payout_id})
+    await log_audit(current_user["id"], "marketing_payout.marked_paid", "marketing_payout", payout_id, {})
+    return {"payout": to_out(updated)}
+
+
+@router.get("/marketing-payouts/{payout_id}/invoice")
+async def marketing_payout_invoice(payout_id: str, current_user: dict = Depends(get_current_user)):
+    """PDF invoice, in the referring business's name, documenting a single
+    Marketing Fee Payout -- period covered, referral count, total fees
+    ROSKYRO collected, the fixed %, the calculated payout amount, and the
+    account it was (or will be) sent to."""
+    payout = await marketing_payouts.find_one({"_id": payout_id})
+    if not payout:
+        raise HTTPException(status_code=404, detail="Payout not found.")
+    if current_user["appShell"] == "customer" and current_user["orgId"] != payout["org_id"]:
+        raise HTTPException(status_code=403, detail="Not authorized.")
+    elif current_user["appShell"] not in ("customer", "internal"):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
+    # Same reasoning as appointments.py's daily PDF export: reportlab
+    # rendering is synchronous CPU-bound work, so it runs in a worker
+    # thread instead of blocking the event loop (and every other
+    # concurrent request) for the duration of the render.
+    pdf_bytes = await run_in_threadpool(render_marketing_payout_invoice_pdf, payout)
+    filename = f"{payout['invoice_number']}.pdf"
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/statements")

@@ -1,6 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends, Query
+import io
+from datetime import datetime
 
-from app.db import appointments
+from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
+
+from app.db import appointments, organizations
 from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.ids import new_id, to_out, to_out_many
@@ -33,6 +38,116 @@ async def list_appointments(
     rows = await appointments.find(filt).to_list(None)
     rows.sort(key=lambda a: (a.get("appointment_date") or "", a.get("appointment_time") or ""), reverse=True)
     return {"appointments": to_out_many(rows[:200])}
+
+
+@router.get("/daily-pdf")
+async def daily_paid_appointments_pdf(
+    date: str = Query(..., description="YYYY-MM-DD"),
+    orgId: str | None = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """Per-day PDF export of paid appointment bookings. Available to any
+    business using the appointment booking system (MANAGE pillar, already
+    gated by require_plan("manage") above) -- no business_type restriction,
+    per the user's explicit clarification that this isn't limited to
+    dr./clinic/hospital accounts only.
+
+    NOTE on scope: the user separately asked that if "this appointment's
+    service is also taken by another listed partner, they should also get
+    it" -- appointments currently have no link to a referral/partner record
+    in the data model (no referral_id / partner_id field on the appointment
+    doc), so there's no existing structural way to know which partner, if
+    any, is associated with a given appointment. Rather than guess at a new
+    linkage, this endpoint implements the clear, unambiguous part of the
+    request (a business's own paid appointments, any day, as a PDF) and
+    intentionally does not attempt the partner-sharing clause -- that needs
+    a product decision on how appointments and partners/referrals should be
+    linked before it can be built correctly and privacy-safely.
+    """
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date must be in YYYY-MM-DD format.")
+
+    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
+    if not org_id:
+        raise HTTPException(status_code=400, detail="orgId is required.")
+
+    org = await organizations.find_one({"_id": org_id})
+    rows = await appointments.find({
+        "org_id": org_id, "appointment_date": date, "payment_status": "paid",
+    }).to_list(None)
+    rows.sort(key=lambda a: (a.get("appointment_time") or ""))
+
+    # reportlab's PDF rendering is synchronous, CPU-bound work -- run it in
+    # a worker thread rather than inline on the event loop, so generating
+    # one business's PDF doesn't stall every other concurrent request on
+    # this (single-worker) server for the duration of the render.
+    pdf_bytes = await run_in_threadpool(_render_daily_appointments_pdf, org.get("name") if org else "ROSKYRO", day, rows)
+    filename = f"paid-appointments-{date}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _render_daily_appointments_pdf(org_name: str, day, rows: list[dict]) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=15 * mm, rightMargin=15 * mm, topMargin=15 * mm, bottomMargin=15 * mm,
+    )
+    styles = getSampleStyleSheet()
+    elements = [
+        Paragraph(f"<b>{org_name}</b>", styles["Title"]),
+        Paragraph(f"Paid Appointment Bookings — {day.strftime('%d %b %Y')}", styles["Heading2"]),
+        Spacer(1, 6 * mm),
+    ]
+
+    total = sum(float(r.get("payment_amount") or r.get("revenue_amount") or 0) for r in rows)
+    data = [["Time", "Patient", "Doctor", "Source", "Amount Paid (₹)"]]
+    for r in rows:
+        amount = float(r.get("payment_amount") or r.get("revenue_amount") or 0)
+        data.append([
+            (r.get("appointment_time") or "—")[:5],
+            r.get("patient_name") or "—",
+            r.get("doctor_name") or "—",
+            (r.get("source") or "—").replace("_", " "),
+            f"{amount:,.2f}",
+        ])
+    if not rows:
+        data.append(["—", "No paid appointments for this date.", "", "", ""])
+
+    table = Table(data, colWidths=[20 * mm, 50 * mm, 45 * mm, 30 * mm, 30 * mm])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f2a4a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d0d5dd")),
+        ("ALIGN", (4, 0), (4, -1), "RIGHT"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9fc")]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    elements.append(table)
+    elements.append(Spacer(1, 6 * mm))
+    elements.append(Paragraph(f"<b>Total collected: ₹{total:,.2f}</b> across {len(rows)} paid appointment(s).", styles["Normal"]))
+    elements.append(Spacer(1, 10 * mm))
+    elements.append(Paragraph(
+        "Generated by ROSKYRO Healthcare OS. This is an internal daily collection summary, not a tax invoice.",
+        styles["Normal"],
+    ))
+
+    doc.build(elements)
+    return buf.getvalue()
 
 
 @router.post("", status_code=201)
