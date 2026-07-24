@@ -95,8 +95,8 @@ export default function Contact() {
           <Card className="p-6">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Office Details</p>
             <p className="text-sm font-semibold text-gray-900">ROSKYRO Technologies</p>
-            <p className="text-sm text-gray-600 mt-2">Mumbai, Maharashtra, India</p>
-            <p className="text-sm text-gray-600 mt-2">hello@roskyro.com</p>
+            <p className="text-sm text-gray-600 mt-2">Chhattisgarh, India</p>
+            <p className="text-sm text-gray-600 mt-2">roskyroofficial@gmail.com</p>
             <p className="text-sm text-gray-600 mt-1">+91 92441 66752</p>
             <p className="text-sm text-gray-600 mt-2">Mon–Sat, 9:00 AM – 7:00 PM IST</p>
             <a
@@ -120,7 +120,7 @@ export default function Contact() {
           <Card className="overflow-hidden">
             <iframe
               title="ROSKYRO office location"
-              src="https://maps.google.com/maps?q=Mumbai%2C%20Maharashtra%2C%20India&t=&z=12&ie=UTF8&iwloc=&output=embed"
+              src="https://maps.google.com/maps?q=Chhattisgarh%2C%20India&t=&z=12&ie=UTF8&iwloc=&output=embed"
               className="w-full h-64 border-0"
               loading="lazy"
             />
