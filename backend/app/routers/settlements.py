@@ -15,10 +15,16 @@ router = APIRouter(prefix="/api/settlements", tags=["settlements"], dependencies
 
 @router.get("/rules")
 async def list_rules(current_user: dict = Depends(get_current_user)):
-    filt: dict = {}
+    # A referring business never sees Marketing Fee amounts -- their
+    # dashboard only shows which partner accepted/completed their referral
+    # (see routers/referrals.py) plus their own incoming Marketing Fee
+    # Payout (see /marketing-payouts and /marketing-fee-rate below). The
+    # per-partner/per-org fee RATE that determines what a partner owes
+    # ROSKYRO per referral is internal/partner-facing only.
     if current_user["appShell"] == "customer":
-        filt["org_id"] = current_user["orgId"]
-    elif current_user["appShell"] == "partner":
+        raise HTTPException(status_code=403, detail="Marketing Fee rates aren't shown on the business dashboard.")
+    filt: dict = {}
+    if current_user["appShell"] == "partner":
         p = await partners.find_one({"org_id": current_user["orgId"]})
         filt["partner_id"] = p["_id"] if p else "__none__"
     rows = await settlement_rules.find(filt).sort("created_at", -1).to_list(None)
@@ -128,10 +134,15 @@ async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_u
 @router.get("")
 @router.get("/")
 async def list_settlements(status: str | None = None, period: str | None = None, current_user: dict = Depends(get_current_user)):
-    filt: dict = {}
+    # Per-referral Marketing Fee amounts (what a partner owes/paid ROSKYRO)
+    # are never shown to the referring business -- their dashboard is
+    # limited to referral status/tracking (routers/referrals.py) plus their
+    # own incoming Marketing Fee Payout (marketing-payouts/marketing-fee-rate
+    # below), which is a separate, already-aggregated figure.
     if current_user["appShell"] == "customer":
-        filt["org_id"] = current_user["orgId"]
-    elif current_user["appShell"] == "partner":
+        raise HTTPException(status_code=403, detail="Marketing Fee settlement details aren't shown on the business dashboard.")
+    filt: dict = {}
+    if current_user["appShell"] == "partner":
         org_partners = await partners.find({"org_id": current_user["orgId"]}).to_list(None)
         filt["partner_id"] = {"$in": [p["_id"] for p in org_partners]}
     if status:
@@ -161,8 +172,17 @@ async def list_settlements(status: str | None = None, period: str | None = None,
     return {"settlements": out}
 
 
+class MarkPaidBody(BaseModel):
+    # Optional UTR/transaction reference the partner attaches as proof of
+    # payment. ROSKYRO deliberately doesn't accept file/screenshot uploads
+    # anywhere in this app (no document storage) -- a text reference number
+    # is the equivalent proof here, and it's shown to ROSKYRO internal on
+    # the settlements oversight page before they confirm-received below.
+    paymentReference: str | None = None
+
+
 @router.post("/{settlement_id}/mark-paid")
-async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current_user)):
+async def mark_paid(settlement_id: str, body: MarkPaidBody = MarkPaidBody(), current_user: dict = Depends(get_current_user)):
     """Patient Referral -> Marketing model: a completed referral is treated
     as the referring business doing marketing for the partner (bringing
     them a patient), so the per-referral Marketing Fee is owed by the
@@ -170,12 +190,14 @@ async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current
     business. So the partner (the payer) is who self-reports it here.
 
     This is a two-sided confirmation, not a one-click "paid" -- the payer
-    clicking this only records their own claim (`payer_marked_paid_at`).
-    The settlement's `status` stays "pending" until ROSKYRO's internal team
-    (the one actually receiving the money) independently confirms receipt
-    via POST /{id}/confirm-received below. This prevents a partner from
-    getting Marketing Fee credit just by claiming payment without ROSKYRO
-    ever actually receiving it.
+    clicking this only records their own claim (`payer_marked_paid_at`,
+    optionally with a `payment_reference`). The settlement's `status` stays
+    "pending" until ROSKYRO's internal team (the one actually receiving the
+    money) independently confirms receipt via POST /{id}/confirm-received
+    below. This prevents a partner from getting Marketing Fee credit just by
+    claiming payment without ROSKYRO ever actually receiving it -- until
+    that confirmation happens, this settlement shows as a pending task on
+    both the partner's Wallet and ROSKYRO's internal Settlements page.
 
     An internal "mark paid" is a dispute-resolution override (the partner
     reported the payment through support instead of using the app) and
@@ -196,18 +218,24 @@ async def mark_paid(settlement_id: str, current_user: dict = Depends(get_current
     if is_internal(current_user["role"]) and not is_payer_partner:
         # Dispute-resolution override: finalize immediately, no separate
         # confirmation step needed.
-        await settlements.update_one({"_id": settlement_id}, {"$set": {
+        update = {
             "status": "paid", "paid_at": now(),
             "payer_marked_paid_at": settlement.get("payer_marked_paid_at") or now(),
             "confirmed_by": "internal_override",
-        }})
+        }
+        if body.paymentReference:
+            update["payment_reference"] = body.paymentReference
+        await settlements.update_one({"_id": settlement_id}, {"$set": update})
     else:
         if settlement.get("payer_marked_paid_at"):
             raise HTTPException(status_code=400, detail="Already marked paid — waiting for ROSKYRO to confirm receipt.")
-        await settlements.update_one({"_id": settlement_id}, {"$set": {"payer_marked_paid_at": now()}})
+        update = {"payer_marked_paid_at": now()}
+        if body.paymentReference:
+            update["payment_reference"] = body.paymentReference
+        await settlements.update_one({"_id": settlement_id}, {"$set": update})
 
     updated = await settlements.find_one({"_id": settlement_id})
-    await log_audit(current_user["id"], "settlement.marked_paid", "settlement", settlement_id, {"markedBy": current_user["appShell"]})
+    await log_audit(current_user["id"], "settlement.marked_paid", "settlement", settlement_id, {"markedBy": current_user["appShell"], "hasPaymentReference": bool(body.paymentReference)})
     return {"settlement": to_out(updated)}
 
 
@@ -428,7 +456,18 @@ async def marketing_payout_invoice(payout_id: str, current_user: dict = Depends(
 
 
 @router.get("/statements")
-async def list_statements(partyType: str | None = None, partyId: str | None = None, period: str | None = None):
+async def list_statements(partyType: str | None = None, partyId: str | None = None, period: str | None = None, current_user: dict = Depends(get_current_user)):
+    # Scope non-internal callers to their own party -- a business or partner
+    # can only ever see their own financial statement, never one they pass
+    # in via query params (this previously had no ownership check at all).
+    if current_user["appShell"] == "customer":
+        partyType, partyId = "org", current_user["orgId"]
+    elif current_user["appShell"] == "partner":
+        p = await partners.find_one({"org_id": current_user["orgId"]})
+        partyType, partyId = "partner", (p["_id"] if p else "__none__")
+    elif current_user["appShell"] != "internal":
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
     filt: dict = {}
     if partyType:
         filt["party_type"] = partyType

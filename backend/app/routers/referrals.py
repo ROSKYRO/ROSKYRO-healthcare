@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
 from app.db import (
-    referrals, referral_status_history, referral_documents, referral_followups,
+    referrals, referral_status_history, referral_followups,
     partners, organizations, partner_categories, users, settlement_rules,
     settlements, whatsapp_messages,
 )
@@ -209,7 +209,6 @@ async def get_referral(referral_id: str, current_user: dict = Depends(get_curren
     out["referring_doctor_email"] = du.get("email") if du else None
 
     history = await referral_status_history.find({"referral_id": referral_id}).sort("changed_at", 1).to_list(None)
-    documents = await referral_documents.find({"referral_id": referral_id}).sort("uploaded_at", -1).to_list(None)
     followups = await referral_followups.find({"referral_id": referral_id}).sort("created_at", -1).to_list(None)
     # What the patient was actually told, and when -- surfaced to both the
     # referring business and the partner so it's clear the patient already
@@ -219,7 +218,6 @@ async def get_referral(referral_id: str, current_user: dict = Depends(get_curren
     return {
         "referral": out,
         "history": to_out_many(history),
-        "documents": to_out_many(documents),
         "followups": to_out_many(followups),
         "patient_notifications": to_out_many(patient_notifications),
     }
@@ -320,17 +318,6 @@ async def create_referral(body: CreateReferralBody, current_user: dict = Depends
             "created_at": now(),
         })
 
-    await referral_documents.insert_one({
-        "_id": new_id(), "referral_id": referral_id, "doc_type": "referral_slip",
-        "file_name": f"{code}-referral-slip.pdf", "file_url": f"/generated/referral-slips/{code}.pdf",
-        "uploaded_by": current_user["id"], "uploaded_at": now(),
-    })
-    await referral_documents.insert_one({
-        "_id": new_id(), "referral_id": referral_id, "doc_type": "qr_code",
-        "file_name": f"{code}-qr.png", "file_url": f"/generated/qr/{code}.png",
-        "uploaded_by": current_user["id"], "uploaded_at": now(),
-    })
-
     if initial_status == "sent":
         partner_owner = await users.find_one({"org_id": partner["org_id"], "role": "partner_admin"})
         if partner_owner:
@@ -351,6 +338,13 @@ class TransitionBody(BaseModel):
     status: str
     note: str | None = None
     declineReason: str | None = None
+    # Only meaningful when the PARTNER is the one completing the referral:
+    # lets them attach their own payment reference/UTR for the Marketing Fee
+    # they just paid ROSKYRO, in the same click as marking the service done.
+    # This does not by itself finalize the fee as "paid" -- see the
+    # settlement-creation block below and settlements.py's confirm-received,
+    # which is the only thing that can do that.
+    paymentReference: str | None = None
 
 
 @router.post("/{referral_id}/transition")
@@ -378,8 +372,8 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
         raise HTTPException(status_code=403, detail="Only the receiving partner can perform this action.")
     if referral["status"] in ["sent", "pending_review"] and body.status == "cancelled" and not (referring_side or internal):
         raise HTTPException(status_code=403, detail="Only the referring business can cancel a referral at this stage.")
-    if body.status == "completed" and not (referring_side or internal):
-        raise HTTPException(status_code=403, detail="Only the referring business marks a referral as fully completed (after reviewing the report).")
+    if body.status == "completed" and not (referring_side or partner_side or internal):
+        raise HTTPException(status_code=403, detail="Only the referring business, the partner who delivered the service, or ROSKYRO can mark a referral as fully completed.")
     if body.status == "sent" and referral["status"] == "pending_review" and not internal:
         raise HTTPException(status_code=403, detail="Only ROSKYRO ops can release a referral that is pending review.")
 
@@ -437,12 +431,25 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
             # here purely for period-based attribution (which referring
             # business generated this fee), not as who owes the money.
             amount = float(rule.get("flat_fee_amount") or 0) if rule["settlement_type"] == "flat_fee" else 0
+            # If the PARTNER is the one completing the referral and attaches a
+            # payment reference in the same click, treat that as them also
+            # having self-reported "I've paid ROSKYRO" (same effect as
+            # calling settlements.py's mark-paid separately) -- but this
+            # still only records the partner's own claim. The settlement
+            # stays "pending" either way; only ROSKYRO's own
+            # POST /settlements/{id}/confirm-received can flip it to "paid",
+            # so it keeps showing as a pending task on both the partner's
+            # and ROSKYRO's side until that happens.
+            partner_self_reported_paid = partner_side and bool(body.paymentReference)
             await settlements.insert_one({
                 "_id": new_id(), "referral_id": referral_id, "rule_id": rule["_id"],
                 "org_id": referral["referring_org_id"], "partner_id": referral["partner_id"],
                 "settlement_type": rule["settlement_type"], "amount": amount,
                 "period_month": now().strftime("%Y-%m"), "status": "pending",
-                "paid_at": None, "payer_marked_paid_at": None, "confirmed_by": None,
+                "paid_at": None,
+                "payer_marked_paid_at": now() if partner_self_reported_paid else None,
+                "payment_reference": body.paymentReference if partner_side else None,
+                "confirmed_by": None,
                 "included_in_payout_id": None, "created_at": now(),
             })
 
@@ -475,29 +482,6 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
         await _notify_patient_whatsapp(updated, body.status)
 
     return {"referral": to_out(updated)}
-
-
-class DocumentBody(BaseModel):
-    docType: str
-    fileName: str
-
-
-@router.post("/{referral_id}/documents", status_code=201)
-async def add_document(referral_id: str, body: DocumentBody, current_user: dict = Depends(get_current_user)):
-    referral = await referrals.find_one({"_id": referral_id})
-    if not referral:
-        raise HTTPException(status_code=404, detail="Referral not found.")
-
-    import time
-    file_url = f"/generated/uploads/{referral_id}/{int(time.time() * 1000)}-{body.fileName}"
-    doc = {
-        "_id": new_id(), "referral_id": referral_id, "doc_type": body.docType,
-        "file_name": body.fileName, "file_url": file_url,
-        "uploaded_by": current_user["id"], "uploaded_at": now(),
-    }
-    await referral_documents.insert_one(doc)
-    await log_audit(current_user["id"], "referral.document_uploaded", "referral", referral_id, {"docType": body.docType, "fileName": body.fileName})
-    return {"document": to_out(doc)}
 
 
 @router.get("/{referral_id}/timeline")
