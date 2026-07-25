@@ -24,7 +24,7 @@ Mongo just no longer has to read every document to find them.
 """
 from app.db import (
     users, organizations, partners, partner_categories, partner_services,
-    referrals, referral_status_history, referral_documents, referral_followups,
+    referrals, referral_status_history, referral_followups,
     settlement_rules, settlements, marketing_payouts, statements,
     appointments, reviews, marketing_performance, visibility_score_history,
     approvals, notifications, tasks, reports, organization_subscriptions,
@@ -45,7 +45,6 @@ _INDEX_PLAN = [
     (partner_agreements, ["partner_id"]),
     (referrals, ["referring_org_id", "partner_id", "status", "created_at"]),
     (referral_status_history, ["referral_id"]),
-    (referral_documents, ["referral_id"]),
     (referral_followups, ["referral_id"]),
     (settlement_rules, ["partner_id", "scope", "is_active"]),
     (settlements, ["org_id", "partner_id", "period_month", "status", "included_in_payout_id"]),

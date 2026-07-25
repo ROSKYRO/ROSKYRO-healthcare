@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db import (
     organizations, users, partner_categories, partners, partner_services,
-    referrals, referral_status_history, referral_documents, settlement_rules,
+    referrals, referral_status_history, settlement_rules,
     settlements, appointments, reviews, marketing_performance,
     visibility_score_history, approvals, notifications, tasks, reports,
     audit_logs, plans as plans_collection, organization_subscriptions,
@@ -116,7 +116,7 @@ async def run():
         audit_logs, reports, team_performance, tasks, notifications, approvals,
         visibility_score_history, marketing_performance, reviews, appointments,
         statements, settlements, settlement_rules,
-        referral_followups, referral_documents, referral_status_history, referrals,
+        referral_followups, referral_status_history, referrals,
         partner_agreements, partner_services, partners, partner_categories,
         whatsapp_messages, invoices, patient_followups, queue_entries, patients,
         booking_settings, doctors, booking_counters,
@@ -450,18 +450,6 @@ async def run():
             if event in history_steps:
                 await _notify_patient_whatsapp(referral_doc, event)
 
-        await referral_documents.insert_one({
-            "_id": new_id(), "referral_id": referral_id, "doc_type": "referral_slip",
-            "file_name": f"{code}-referral-slip.pdf", "file_url": f"/generated/referral-slips/{code}.pdf",
-            "uploaded_by": doctor_id, "uploaded_at": now(),
-        })
-        if status in ("report_uploaded", "completed"):
-            await referral_documents.insert_one({
-                "_id": new_id(), "referral_id": referral_id, "doc_type": "report",
-                "file_name": f"{code}-report.pdf", "file_url": f"/generated/reports/{code}.pdf",
-                "uploaded_by": spec["partner"]["partnerAdminId"], "uploaded_at": now(),
-            })
-
         if status == "completed":
             partner_id = spec["partner"]["partner"]["_id"]
             rule = await settlement_rules.find_one({"partner_id": partner_id})
@@ -485,6 +473,7 @@ async def run():
                     "partner_id": partner_id, "settlement_type": rule["settlement_type"], "amount": amount,
                     "status": "pending", "paid_at": None,
                     "payer_marked_paid_at": (now() - timedelta(hours=6)) if payer_claimed else None,
+                    "payment_reference": "UPI-DEMO-REF-88213" if payer_claimed else None,
                     "confirmed_by": None, "included_in_payout_id": None,
                     "period_month": now().strftime("%Y-%m"), "created_at": now(),
                 })
