@@ -68,6 +68,12 @@ ALLOWED_ORG_PATCH_FIELDS = {
     "address": "address", "pincode": "pincode", "phone": "phone", "email": "email",
     "website": "website", "logoUrl": "logo_url", "subscriptionPlan": "subscription_plan",
     "status": "status",
+    # Where ROSKYRO sends this business's periodic Marketing Fee Payout
+    # (see routers/settlements.py's marketing-payouts endpoints) -- distinct
+    # from a partner's own payout_upi_id on the `partners` collection,
+    # which is a different account for a different flow (a partner's own
+    # profile, not the customer org record).
+    "marketingPayoutUpiId": "marketing_payout_upi_id",
 }
 
 
