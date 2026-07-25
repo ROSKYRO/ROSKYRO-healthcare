@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
-import { Card, CardHeader, Badge, Button, PageLoading, Textarea, formatDateTime } from '../../components/ui';
+import { Card, CardHeader, Badge, Button, Input, PageLoading, Textarea, formatDateTime } from '../../components/ui';
 
 const STEP_LABELS = {
   draft: 'Referral Created', pending_review: 'Held for ROSKYRO Review', sent: 'Sent to Partner',
@@ -20,6 +20,12 @@ function availableActions(referral, user) {
     if (s === 'sent') actions.push({ status: 'accepted', label: 'Accept Referral', variant: 'primary' }, { status: 'declined', label: 'Decline', variant: 'danger' });
     if (s === 'accepted') actions.push({ status: 'in_progress', label: 'Mark In Progress', variant: 'primary' });
     if (s === 'in_progress') actions.push({ status: 'report_uploaded', label: 'Upload Report & Notify Doctor', variant: 'primary' });
+    // Partner has serviced the patient and can close the referral out
+    // themselves once they've paid ROSKYRO the Marketing Fee -- attaching a
+    // payment reference here (see the field rendered below) records their
+    // own "I've paid" claim in the same click, but it still only becomes
+    // "Paid" once ROSKYRO independently confirms receipt (Wallet page).
+    if (s === 'report_uploaded') actions.push({ status: 'completed', label: "Mark Completed — I've Paid ROSKYRO", variant: 'primary', needsPaymentReference: true });
   }
   if (shell === 'customer') {
     if (s === 'report_uploaded') actions.push({ status: 'completed', label: 'Mark Completed (report reviewed)', variant: 'primary' });
@@ -40,6 +46,7 @@ export default function ReferralDetail({ basePath }) {
   const { user } = useAuth();
   const [detail, setDetail] = useState(null);
   const [note, setNote] = useState('');
+  const [paymentReference, setPaymentReference] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -49,14 +56,16 @@ export default function ReferralDetail({ basePath }) {
 
   useEffect(() => { load(); }, [load]);
 
-  async function doTransition(status) {
+  async function doTransition(status, needsPaymentReference) {
     setBusy(true);
     setError('');
     try {
       const payload = { status, note: note || undefined };
       if (status === 'declined') payload.declineReason = note || 'Declined by partner';
+      if (needsPaymentReference && paymentReference) payload.paymentReference = paymentReference;
       await api.post(`/referrals/${id}/transition`, payload);
       setNote('');
+      setPaymentReference('');
       load();
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not update referral.');
@@ -66,7 +75,7 @@ export default function ReferralDetail({ basePath }) {
   }
 
   if (!detail) return <PageLoading />;
-  const { referral, history, documents, followups, patient_notifications: patientNotifications = [] } = detail;
+  const { referral, history, followups, patient_notifications: patientNotifications = [] } = detail;
   const actions = availableActions(referral, user);
 
   return (
@@ -95,21 +104,6 @@ export default function ReferralDetail({ basePath }) {
                   </li>
                 ))}
               </ol>
-            </div>
-          </Card>
-
-          <Card>
-            <CardHeader title="Documents" subtitle="Referral slip, QR code and reports" />
-            <div className="px-5 pb-5 divide-y divide-gray-100">
-              {documents.map((d) => (
-                <div key={d.id} className="py-2.5 flex items-center justify-between text-sm">
-                  <div>
-                    <p className="font-medium text-gray-800">{d.file_name}</p>
-                    <p className="text-xs text-gray-400 capitalize">{d.doc_type.replace(/_/g, ' ')} · {formatDateTime(d.uploaded_at)}</p>
-                  </div>
-                  <Badge tone="slate">{d.doc_type}</Badge>
-                </div>
-              ))}
             </div>
           </Card>
 
@@ -183,14 +177,29 @@ export default function ReferralDetail({ basePath }) {
             <Card className="p-5">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Actions</p>
               <Textarea placeholder="Add a note (optional)" rows={2} value={note} onChange={(e) => setNote(e.target.value)} className="mb-3" />
+              {actions.some((a) => a.needsPaymentReference) && (
+                <Input
+                  label="Payment Reference / UTR (optional)"
+                  placeholder="e.g. UPI transaction ID"
+                  value={paymentReference}
+                  onChange={(e) => setPaymentReference(e.target.value)}
+                  className="mb-3"
+                />
+              )}
               {error && <p className="text-sm text-rose-600 mb-2">{error}</p>}
               <div className="flex flex-col gap-2">
                 {actions.map((a) => (
-                  <Button key={a.status} variant={a.variant} disabled={busy} onClick={() => doTransition(a.status)}>
+                  <Button key={a.status} variant={a.variant} disabled={busy} onClick={() => doTransition(a.status, a.needsPaymentReference)}>
                     {a.label}
                   </Button>
                 ))}
               </div>
+              {actions.some((a) => a.needsPaymentReference) && (
+                <p className="text-xs text-gray-400 mt-2">
+                  Payment reference dena optional hai, lekin dene se ROSKYRO ko confirm karna aasan ho jaata hai. Jab tak
+                  ROSKYRO "Confirm Received" nahi karta, ye Marketing Fee dono taraf "Pending" hi dikhegi (Wallet page par dekh sakte hain).
+                </p>
+              )}
             </Card>
           )}
         </div>
