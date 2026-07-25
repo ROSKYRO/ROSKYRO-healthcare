@@ -81,6 +81,7 @@ export default function Wallet() {
   const [settlements, setSettlements] = useState(null);
   const [partner, setPartner] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [refDrafts, setRefDrafts] = useState({});
 
   const load = useCallback(() => {
     Promise.all([api.get('/settlements'), api.get('/partners/me')]).then(([s, p]) => {
@@ -94,7 +95,9 @@ export default function Wallet() {
   async function markPaid(id) {
     setBusyId(id);
     try {
-      await api.post(`/settlements/${id}/mark-paid`);
+      const paymentReference = (refDrafts[id] || '').trim() || undefined;
+      await api.post(`/settlements/${id}/mark-paid`, { paymentReference });
+      setRefDrafts((prev) => ({ ...prev, [id]: '' }));
       load();
     } finally {
       setBusyId(null);
@@ -161,15 +164,24 @@ export default function Wallet() {
               if (r.status === 'paid') return null;
               if (r.payer_marked_paid_at) {
                 return (
-                  <span className="text-xs text-amber-700" title={`You marked this paid on ${formatDateTime(r.payer_marked_paid_at)}`}>
+                  <span className="text-xs text-amber-700" title={`You marked this paid on ${formatDateTime(r.payer_marked_paid_at)}${r.payment_reference ? ` · Ref: ${r.payment_reference}` : ''}`}>
                     Waiting for ROSKYRO to confirm
                   </span>
                 );
               }
               return (
-                <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>
-                  {busyId === r.id ? 'Marking…' : "I've Paid ROSKYRO"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="Payment ref (optional)"
+                    value={refDrafts[r.id] || ''}
+                    onChange={(e) => setRefDrafts((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                    className="text-xs border border-gray-200 rounded px-2 py-1 w-32"
+                  />
+                  <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>
+                    {busyId === r.id ? 'Marking…' : "I've Paid ROSKYRO"}
+                  </Button>
+                </div>
               );
             } },
           ]}
