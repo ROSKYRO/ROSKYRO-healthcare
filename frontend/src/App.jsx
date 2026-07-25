@@ -40,7 +40,7 @@ import CustomerSettlements from './pages/customer/Settlements';
 
 import PartnerDashboard from './pages/partner/Dashboard';
 import PartnerRequests from './pages/partner/Requests';
-import PartnerSettlements from './pages/partner/Settlements';
+import Wallet from './pages/partner/Wallet';
 
 import InternalDashboard from './pages/internal/Dashboard';
 import Tasks from './pages/internal/Tasks';
@@ -48,6 +48,7 @@ import AllReferrals from './pages/internal/AllReferrals';
 import Organizations from './pages/internal/Organizations';
 import PartnerVerification from './pages/internal/PartnerVerification';
 import InternalSettlements from './pages/internal/Settlements';
+import MarketingPayouts from './pages/internal/MarketingPayouts';
 import Roster from './pages/internal/Roster';
 import PricingManagement from './pages/internal/PricingManagement';
 import PasswordRequests from './pages/internal/PasswordRequests';
@@ -101,7 +102,7 @@ export default function App() {
           <Route path="/partner" element={<ProtectedRoute allow={['partner']}><PartnerDashboard /></ProtectedRoute>} />
           <Route path="/partner/requests" element={<ProtectedRoute allow={['partner']}><PartnerRequests /></ProtectedRoute>} />
           <Route path="/partner/requests/:id" element={<ProtectedRoute allow={['partner']}><ReferralDetail basePath="/partner/requests" /></ProtectedRoute>} />
-          <Route path="/partner/settlements" element={<ProtectedRoute allow={['partner']}><PartnerSettlements /></ProtectedRoute>} />
+          <Route path="/partner/wallet" element={<ProtectedRoute allow={['partner']}><Wallet /></ProtectedRoute>} />
 
           {/* Internal ROSKYRO team dashboard */}
           <Route path="/team" element={<ProtectedRoute allow={['internal']}><InternalDashboard /></ProtectedRoute>} />
@@ -111,6 +112,7 @@ export default function App() {
           <Route path="/team/organizations" element={<ProtectedRoute allow={['internal']}><Organizations /></ProtectedRoute>} />
           <Route path="/team/partner-verification" element={<ProtectedRoute allow={['internal']}><PartnerVerification /></ProtectedRoute>} />
           <Route path="/team/settlements" element={<ProtectedRoute allow={['internal']}><InternalSettlements /></ProtectedRoute>} />
+          <Route path="/team/marketing-payouts" element={<ProtectedRoute allow={['internal']}><MarketingPayouts /></ProtectedRoute>} />
           <Route path="/team/roster" element={<ProtectedRoute allow={['internal']}><Roster /></ProtectedRoute>} />
           <Route path="/team/pricing" element={<ProtectedRoute allow={['internal']}><PricingManagement /></ProtectedRoute>} />
           <Route path="/team/password-requests" element={<ProtectedRoute allow={['internal']}><PasswordRequests /></ProtectedRoute>} />
