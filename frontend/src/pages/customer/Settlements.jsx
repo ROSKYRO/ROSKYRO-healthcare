@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import UpgradePrompt from '../../components/UpgradePrompt';
-import { Card, CardHeader, Table, Badge, Input, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
+import { Card, CardHeader, Table, Badge, Input, Button, PageLoading, formatCurrency } from '../../components/ui';
 
 function PayoutAccountSettings({ org, onSaved }) {
   const [upiId, setUpiId] = useState(org.marketing_payout_upi_id || '');
@@ -54,7 +54,6 @@ function PayoutAccountSettings({ org, onSaved }) {
 
 export default function CustomerSettlements() {
   const { user } = useAuth();
-  const [settlements, setSettlements] = useState(null);
   const [payouts, setPayouts] = useState(null);
   const [rate, setRate] = useState(null);
   const [org, setOrg] = useState(null);
@@ -62,14 +61,15 @@ export default function CustomerSettlements() {
   const [downloadingId, setDownloadingId] = useState(null);
 
   const load = useCallback(() => {
+    // Note: only your own incoming Marketing Fee Payout is shown here.
+    // Per-referral partner fee amounts (what a partner pays ROSKYRO) are
+    // internal/partner-facing only and aren't fetched or shown on this page.
     Promise.all([
-      api.get('/settlements'),
       api.get('/settlements/marketing-payouts'),
       api.get('/settlements/marketing-fee-rate'),
       api.get(`/orgs/${user.orgId}`),
     ])
-      .then(([s, p, r, o]) => {
-        setSettlements(s.data.settlements);
+      .then(([p, r, o]) => {
         setPayouts(p.data.payouts);
         setRate(r.data.percentage);
         setOrg(o.data.organization);
@@ -97,30 +97,24 @@ export default function CustomerSettlements() {
   }
 
   if (blocked) return <UpgradePrompt pillar="connect" />;
-  if (!settlements || !payouts || rate == null || !org) return <PageLoading />;
+  if (!payouts || rate == null || !org) return <PageLoading />;
 
-  const totalFeesGenerated = settlements.reduce((sum, s) => sum + Number(s.amount), 0);
   const totalReceived = payouts.filter((p) => p.status === 'paid').reduce((sum, p) => sum + Number(p.payout_amount), 0);
   const pendingPayout = payouts.filter((p) => p.status === 'pending').reduce((sum, p) => sum + Number(p.payout_amount), 0);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Marketing Fee Earnings</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Marketing Fee Payouts</h1>
         <p className="text-sm text-gray-500 mt-1">
           Jab aap kisi ROSKYRO Networking Marketing partner ko patient refer karte hain, to ise us partner ke liye aapki taraf se
-          ki gayi marketing maana jaata hai. Partner is referral ka Marketing Fee (flat ₹ amount) seedha ROSKYRO ko
-          pay karta hai — aapko kuch pay nahi karna. Badle mein, ROSKYRO har period (month) collect hui Marketing
-          Fees ka ek fixed <span className="font-semibold">{rate}%</span> aapko wapas deta hai, ek Marketing Fee
-          Payout ke roop mein, seedha aapki payout UPI ID par — har payout ke saath ek invoice bhi milta hai.
+          ki gayi marketing maana jaata hai. ROSKYRO har period (month) collect hui Marketing Fees ka ek fixed{' '}
+          <span className="font-semibold">{rate}%</span> aapko wapas deta hai, ek Marketing Fee Payout ke roop mein,
+          seedha aapki payout UPI ID par — har payout ke saath ek invoice bhi milta hai.
         </p>
       </div>
 
-      <div className="grid md:grid-cols-3 gap-5">
-        <Card className="p-5">
-          <p className="text-sm text-gray-500">Total Marketing Fees generated (all-time)</p>
-          <p className="text-2xl font-bold text-gray-900">{formatCurrency(totalFeesGenerated)}</p>
-        </Card>
+      <div className="grid md:grid-cols-2 gap-5">
         <Card className="p-5">
           <p className="text-sm text-gray-500">Received from ROSKYRO so far</p>
           <p className="text-2xl font-bold text-emerald-700">{formatCurrency(totalReceived)}</p>
@@ -150,21 +144,6 @@ export default function CustomerSettlements() {
                 {downloadingId === r.id ? 'Downloading…' : `⬇ ${r.invoice_number}`}
               </Button>
             ) },
-          ]}
-        />
-      </Card>
-
-      <Card>
-        <CardHeader title="Referral Fee Activity" subtitle="Har referral ke completion par partner ne kitna Marketing Fee ROSKYRO ko owe kiya — informational, aapki taraf se koi action nahi chahiye." />
-        <Table
-          rows={settlements}
-          emptyMessage="Koi Marketing Fee record abhi tak nahi bana."
-          columns={[
-            { key: 'referral_code', header: 'Referral' },
-            { key: 'partner_org_name', header: 'Partner' },
-            { key: 'amount', header: 'Marketing Fee', render: (r) => formatCurrency(r.amount) },
-            { key: 'status', header: 'Partner → ROSKYRO Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
-            { key: 'created_at', header: 'Date', render: (r) => formatDate(r.created_at) },
           ]}
         />
       </Card>
