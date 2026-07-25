@@ -33,7 +33,7 @@ const NAV = {
     // items are hidden for them since there's nothing for them to do here.
     { to: '/app/referrals', label: 'Referral Network', icon: '\u{1F91D}', pillar: 'connect', requiresReferralRights: true },
     { to: '/app/partners', label: 'Partner Directory', icon: '\u{1F4D1}', pillar: 'connect', requiresReferralRights: true },
-    { to: '/app/settlements', label: 'Marketing Fee Earnings', icon: '\u{1F4B0}', pillar: 'connect', requiresReferralRights: true },
+    { to: '/app/settlements', label: 'Marketing Fee Payouts', icon: '\u{1F4B0}', pillar: 'connect', requiresReferralRights: true },
     { section: null },
     { to: '/app/approvals', label: 'Pending Approvals', icon: '\u{2705}' },
     { to: '/app/team', label: 'My Team', icon: '\u{1F465}' },
