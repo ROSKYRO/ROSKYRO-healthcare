@@ -22,49 +22,69 @@ export default function InternalSettlements() {
     }
   }
 
+  async function confirmReceived(id) {
+    setBusyId(id);
+    try {
+      await api.post(`/settlements/${id}/confirm-received`);
+      load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (!settlements) return <PageLoading />;
   const pendingTotal = settlements.filter((s) => s.status === 'pending').reduce((sum, s) => sum + Number(s.amount), 0);
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Settlements (Oversight Only)</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Marketing Fees (Collection Oversight)</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Generated automatically when a referral completes, based on each partner's configured settlement rule.
-          Never assumed by default. ROSKYRO does not process this money — the referring business pays the partner
-          directly at their Payout UPI ID. Normal path is two-sided: the business marks it paid, then the partner
-          independently confirms receipt before status becomes "paid" — a business's own claim is never enough on
-          its own. "Mark Paid" here is a dispute-resolution override that finalizes immediately, bypassing partner
-          confirmation — use it only to resolve a dispute or record a payment a business reported through support.
+          Generated automatically when a referral completes, based on the partner's configured Marketing Fee rule
+          (always a flat rupee amount — percentage-based commission has been removed entirely). A patient referral is
+          treated as marketing the referring business did for the partner, so this fee is owed by the PARTNER,
+          straight to ROSKYRO — not to the referring business. Normal path is two-sided: the partner marks it paid,
+          then ROSKYRO internal independently confirms receipt before status becomes "paid". "Mark Paid" here is a
+          dispute-resolution override that finalizes immediately (use it only when a partner reported the payment
+          through support). Once collected, ROSKYRO periodically pays a fixed % of these fees back to the referring
+          business as a Marketing Fee Payout — see the "Marketing Fee Payouts" page for that side of the flow.
         </p>
       </div>
 
       <Card className="p-5">
-        <p className="text-sm text-gray-500">Pending commission total (unpaid, across all businesses)</p>
+        <p className="text-sm text-gray-500">Pending Marketing Fees total (unpaid, across all partners)</p>
         <p className="text-2xl font-bold text-gray-900">{formatCurrency(pendingTotal)}</p>
       </Card>
 
       <Card>
         <Table
           rows={settlements}
-          emptyMessage="No settlements generated yet."
+          emptyMessage="No Marketing Fees generated yet."
           columns={[
             { key: 'referral_code', header: 'Referral' },
-            { key: 'org_name', header: 'Business' },
-            { key: 'partner_org_name', header: 'Partner' },
-            { key: 'partner_payout_upi_id', header: 'Payout UPI', render: (r) => r.partner_payout_upi_id
-              ? <span className="font-mono text-xs text-gray-700">{r.partner_payout_upi_id}</span>
-              : <span className="text-xs text-rose-500">Not set yet</span> },
-            { key: 'settlement_type', header: 'Type', render: (r) => <Badge tone="slate">{r.settlement_type.replace(/_/g, ' ')}</Badge> },
-            { key: 'amount', header: 'Amount', render: (r) => formatCurrency(r.amount) },
+            { key: 'org_name', header: 'Referring Business' },
+            { key: 'partner_org_name', header: 'Partner (payer)' },
+            { key: 'amount', header: 'Marketing Fee', render: (r) => formatCurrency(r.amount) },
             { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
-            { key: 'payer_marked_paid_at', header: 'Business claims paid', render: (r) => r.payer_marked_paid_at
+            { key: 'payer_marked_paid_at', header: 'Partner claims paid', render: (r) => r.payer_marked_paid_at
               ? <span className="text-xs text-gray-600">{formatDateTime(r.payer_marked_paid_at)}</span>
               : <span className="text-xs text-gray-400">Not yet</span> },
             { key: 'created_at', header: 'Date', render: (r) => formatDate(r.created_at) },
-            { key: 'actions', header: '', render: (r) => r.status === 'pending' && (
-              <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>Mark Paid (override)</Button>
-            ) },
+            { key: 'actions', header: '', render: (r) => {
+              if (r.status === 'paid') return null;
+              if (r.payer_marked_paid_at) {
+                return (
+                  <Button size="sm" disabled={busyId === r.id} onClick={() => confirmReceived(r.id)}>
+                    {busyId === r.id ? 'Confirming…' : 'Confirm Received'}
+                  </Button>
+                );
+              }
+              return (
+                <Button size="sm" variant="secondary" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>
+                  {busyId === r.id ? '…' : 'Mark Paid (override)'}
+                </Button>
+              );
+            } },
           ]}
         />
       </Card>
