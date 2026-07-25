@@ -8,8 +8,6 @@ import logo from '../assets/logo.png';
 const DEMO_ACCOUNTS = [
   { label: 'Clinic Owner (Customer)', identifier: 'sunrise.family.clinic@example.com' },
   { label: 'Partner Admin (CityScan Diagnostics)', identifier: 'admin.cityscan.diagnostics@example.com' },
-  { label: 'ROSKYRO Admin (Internal)', identifier: 'admin@roskyro.com' },
-  { label: 'ROSKYRO Ops Manager (Internal)', identifier: 'ops@roskyro.com' },
 ];
 
 function ForgotPasswordPanel({ onClose }) {
