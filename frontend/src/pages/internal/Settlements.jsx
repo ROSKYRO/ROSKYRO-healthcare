@@ -67,7 +67,12 @@ export default function InternalSettlements() {
             { key: 'amount', header: 'Marketing Fee', render: (r) => formatCurrency(r.amount) },
             { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
             { key: 'payer_marked_paid_at', header: 'Partner claims paid', render: (r) => r.payer_marked_paid_at
-              ? <span className="text-xs text-gray-600">{formatDateTime(r.payer_marked_paid_at)}</span>
+              ? (
+                <div>
+                  <span className="text-xs text-gray-600">{formatDateTime(r.payer_marked_paid_at)}</span>
+                  {r.payment_reference && <p className="text-xs text-gray-400 font-mono">Ref: {r.payment_reference}</p>}
+                </div>
+              )
               : <span className="text-xs text-gray-400">Not yet</span> },
             { key: 'created_at', header: 'Date', render: (r) => formatDate(r.created_at) },
             { key: 'actions', header: '', render: (r) => {
