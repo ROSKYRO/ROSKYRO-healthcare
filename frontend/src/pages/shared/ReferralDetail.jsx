@@ -123,7 +123,9 @@ export default function ReferralDetail({ basePath }) {
                 patientNotifications.map((m) => (
                   <div key={m.id} className="py-2.5 text-sm">
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-emerald-700">✓ Sent to {m.patient_phone}</span>
+                      <span className={`text-xs font-medium ${m.status === 'sent' ? 'text-emerald-700' : 'text-amber-700'}`}>
+                        {m.status === 'sent' ? `✓ Sent to ${m.patient_phone}` : `⏳ Queued for ${m.patient_phone} — ROSKYRO team will send shortly`}
+                      </span>
                       <span className="text-xs text-gray-400">{formatDateTime(m.created_at)}</span>
                     </div>
                     <p className="text-gray-700 mt-1">{m.message}</p>
