@@ -14,7 +14,7 @@ from app.routers import (
     auth, orgs, partners, referrals, settlements, tasks, dashboard, notifications,
     approvals, appointments, reviews, reports, plans, patients, queue, followups,
     billing, whatsapp, settings, booking_settings, public_booking, doctors, public_marketing,
-    password_resets, subscription_renewals,
+    password_resets, subscription_renewals, partnerships,
 )
 
 app = FastAPI(title="ROSKYRO Healthcare OS API")
@@ -126,6 +126,7 @@ app.include_router(doctors.router)
 app.include_router(public_marketing.router)
 app.include_router(password_resets.router)
 app.include_router(subscription_renewals.router)
+app.include_router(partnerships.router)
 
 # --- Serve the built React frontend from this same service (single Railway
 # service, one URL) ---

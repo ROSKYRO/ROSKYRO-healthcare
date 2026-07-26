@@ -31,6 +31,7 @@ from app.db import (
     booking_settings, patients, queue_entries, patient_followups, invoices,
     whatsapp_messages, partner_agreements, doctors, password_reset_requests,
     newsletter_subscribers, contact_leads, subscription_renewals,
+    partnerships, partnership_requests,
 )
 
 # (collection, [index specs]) -- each spec is either a single field name
@@ -50,7 +51,9 @@ _INDEX_PLAN = [
     (settlements, ["org_id", "partner_id", "period_month", "status", "included_in_payout_id"]),
     (marketing_payouts, ["org_id", "period"]),
     (statements, [[("party_type", 1), ("party_id", 1)]]),
-    (appointments, [[("org_id", 1), ("appointment_date", 1)], "patient_name"]),
+    # "booking_code" powers GET /appointments/lookup/{booking_code} --
+    # the quick-referral flow's org-scoped exact-match lookup.
+    (appointments, [[("org_id", 1), ("appointment_date", 1)], "patient_name", "booking_code"]),
     (reviews, ["org_id"]),
     (marketing_performance, [[("org_id", 1), ("period_month", 1)]]),
     (visibility_score_history, ["org_id"]),
@@ -72,6 +75,11 @@ _INDEX_PLAN = [
     (password_reset_requests, [[("user_id", 1), ("status", 1)]]),
     (newsletter_subscribers, ["email"]),
     (contact_leads, ["created_at"]),
+    # (org_id, category_id, status) covers both list_partnerships (org_id +
+    # status="active") and _set_partnership's end-the-old-one update
+    # (org_id + category_id + status="active") -- see routers/partnerships.py.
+    (partnerships, [[("org_id", 1), ("category_id", 1), ("status", 1)], "partner_id"]),
+    (partnership_requests, [[("org_id", 1), ("status", 1)], [("partner_id", 1), ("status", 1)]]),
 ]
 
 

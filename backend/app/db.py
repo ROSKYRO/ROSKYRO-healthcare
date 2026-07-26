@@ -94,3 +94,21 @@ booking_counters = db["booking_counters"]
 # an O(collection size) full scan repeated on every single write. See
 # app/utils/counters.py.
 sequence_counters = db["sequence_counters"]
+
+# A business's own designated "my partner" per service category -- a
+# lighter-weight relationship layered ON TOP of the open partner
+# marketplace (routers/partners.py's list/search-by-service), not a
+# replacement for it: a business can still refer to ANY partner in a
+# category at any time (see routers/referrals.py) regardless of whether a
+# partnership is set. Setting one just gives that partner a "★ Your
+# Partner" shortcut at the top of the quick-referral search results. At
+# most ONE row per (org_id, category_id) has status "active" at a time --
+# picking a new partner for a category ends whichever one was active
+# there before (see routers/partnerships.py's _set_partnership).
+partnerships = db["partnerships"]
+
+# A partner's outbound pitch to a specific business ("let me be your
+# partner for X category") -- separate from `partnerships` above because a
+# request needs its own pending/accepted/declined lifecycle before (if
+# ever) it becomes an active partnership. See routers/partnerships.py.
+partnership_requests = db["partnership_requests"]
