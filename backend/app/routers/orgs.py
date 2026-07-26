@@ -5,6 +5,7 @@ from app.auth import get_current_user, require_internal, hash_password
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.phone import normalize_phone
+from app.routers.referrals import REFERRAL_CREATOR_BUSINESS_TYPES
 
 router = APIRouter(prefix="/api/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
 
@@ -68,6 +69,33 @@ async def list_orgs(status: str | None = None, q: str | None = None):
         item["monthly_total"] = monthly_total
         out.append(item)
     return {"organizations": out}
+
+
+@router.get("/directory")
+async def org_directory(q: str | None = None, current_user: dict = Depends(get_current_user)):
+    """Lightweight, non-financial business lookup for a partner deciding who
+    to send a partnership request to (see routers/partnerships.py's
+    POST /requests) -- partner-shell only. Deliberately narrower than
+    list_orgs above (which is internal-only and includes billing/pillar
+    data): only businesses that can actually receive/create referrals
+    (REFERRAL_CREATOR_BUSINESS_TYPES -- clinic/hospital/eye_hospital) are
+    worth a partner requesting, and only name/city/business_type are
+    returned, never subscription or financial fields.
+
+    MUST be registered before GET /{org_id} below -- FastAPI matches routes
+    in registration order, and a route registered after a path-parameter
+    route would never be reached (the literal "directory" would instead be
+    swallowed as if it were an {org_id})."""
+    if current_user["appShell"] not in ("partner", "internal"):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+    filt: dict = {"business_type": {"$in": list(REFERRAL_CREATOR_BUSINESS_TYPES)}}
+    if q:
+        filt["name"] = {"$regex": q, "$options": "i"}
+    rows = await organizations.find(filt).sort("name", 1).limit(100).to_list(None)
+    return {"organizations": [
+        {"id": o["_id"], "name": o.get("name"), "city": o.get("city"), "businessType": o.get("business_type")}
+        for o in rows
+    ]}
 
 
 @router.get("/{org_id}")

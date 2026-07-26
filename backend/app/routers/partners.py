@@ -1,7 +1,7 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
-from app.db import partners, organizations, partner_categories, partner_services, users, partner_agreements, settlement_rules
+from app.db import partners, organizations, partner_categories, partner_services, users, partner_agreements, settlement_rules, partnerships
 from app.auth import get_current_user, require_internal
 from app.utils.plans import require_plan
 from app.utils.audit import log_audit
@@ -214,6 +214,61 @@ async def recommendations(category: str, city: str | None = None):
         "note": "AI-drafted recommendation. A ROSKYRO team member (or the referring doctor) makes the final selection — this list is a suggestion, not an auto-assignment, per the AI + Human operating model.",
         "recommendations": scored[:5],
     }
+
+
+@router.get("/search-by-service", dependencies=[Depends(require_plan("connect"))])
+async def search_by_service(keyword: str = Query(..., min_length=1), current_user: dict = Depends(get_current_user)):
+    """Keyword search across WHAT a partner offers, not who they are --
+    unlike GET /partners's `q` (which only matches the partner org's own
+    name/contact person), this matches the service category name (e.g.
+    typing "blood" finds the "Blood Test Labs" category) AND each
+    partner's own named services (partner_services.name, e.g. "Complete
+    Blood Count"). Powers the quick-referral flow in ReferralNew.jsx: a
+    referring doctor types what the patient needs and immediately sees
+    every partner who offers it, without first having to know which
+    category that falls under.
+
+    The marketplace stays fully open regardless of any partnership (see
+    routers/partnerships.py) -- every matching partner still shows up
+    here. The only thing a partnership changes is that its partner is
+    flagged `is_my_partner` and sorted to the very top, as a "★ Your
+    Partner" shortcut; nothing is filtered out or blocked.
+
+    Registered ahead of GET /{partner_id} below (a path parameter would
+    otherwise swallow this as partner_id="search-by-service")."""
+    needle = keyword.strip()
+    if not needle:
+        return {"partners": []}
+
+    matching_categories = await partner_categories.find({"name": {"$regex": needle, "$options": "i"}}).to_list(None)
+    category_ids = [c["_id"] for c in matching_categories]
+
+    matching_services = await partner_services.find(
+        {"name": {"$regex": needle, "$options": "i"}, "is_active": True}
+    ).to_list(None)
+    partner_ids_by_service = list({s["partner_id"] for s in matching_services})
+
+    or_clauses = []
+    if category_ids:
+        or_clauses.append({"category_id": {"$in": category_ids}})
+    if partner_ids_by_service:
+        or_clauses.append({"_id": {"$in": partner_ids_by_service}})
+    if not or_clauses:
+        return {"partners": []}
+
+    rows = await partners.find({"$or": or_clauses}).to_list(None)
+    rate_map = await _referral_bonus_amounts_for(rows)
+    enriched = await _enrich_partners(rows, rate_map)
+
+    my_partner_ids: set[str] = set()
+    if current_user["appShell"] == "customer":
+        active = await partnerships.find({"org_id": current_user["orgId"], "status": "active"}).to_list(None)
+        my_partner_ids = {a["partner_id"] for a in active}
+    for e in enriched:
+        e["is_my_partner"] = e["id"] in my_partner_ids
+
+    enriched.sort(key=lambda e: (not e["is_my_partner"], not e.get("preferred_partner"), -(e.get("rating_avg") or 0)))
+    return {"partners": enriched[:50]}
 
 
 @router.get("/me")
