@@ -16,8 +16,14 @@ async def list_approvals(status: str | None = None, orgId: str | None = None, cu
     filt: dict = {}
     if current_user["appShell"] == "customer":
         filt["org_id"] = current_user["orgId"]
-    elif orgId:
+    elif current_user["appShell"] == "internal" and orgId:
+        # Restricted to internal -- a partner-shell account has no
+        # legitimate approvals of its own and previously could pass an
+        # arbitrary ?orgId= here (same fallback internal used) to read
+        # another business's pending-approval queue.
         filt["org_id"] = orgId
+    elif current_user["appShell"] != "internal":
+        raise HTTPException(status_code=403, detail="Not authorized.")
     if status:
         filt["status"] = status
 
@@ -82,7 +88,13 @@ async def decide_approval(approval_id: str, body: DecisionBody, current_user: di
     existing = await approvals.find_one({"_id": approval_id})
     if not existing:
         raise HTTPException(status_code=404, detail="Approval not found.")
-    if current_user["appShell"] == "customer" and existing["org_id"] != current_user["orgId"]:
+    # Fixed: previously only blocked a customer from a DIFFERENT org, so a
+    # partner-shell account (appShell == "partner") never matched that
+    # condition and could approve/reject ANY business's pending approval.
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and existing["org_id"] == current_user["orgId"])
+    ):
         raise HTTPException(status_code=403, detail="Not authorized.")
 
     await approvals.update_one({"_id": approval_id}, {"$set": {

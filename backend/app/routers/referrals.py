@@ -407,8 +407,15 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
 
     if body.status in partner_only_actions and not (partner_side or internal):
         raise HTTPException(status_code=403, detail="Only the receiving partner can perform this action.")
-    if referral["status"] in ["sent", "pending_review"] and body.status == "cancelled" and not (referring_side or internal):
-        raise HTTPException(status_code=403, detail="Only the referring business can cancel a referral at this stage.")
+    # Fixed: this previously only fired when referral["status"] was "sent"
+    # or "pending_review", but TRANSITIONS also allows "cancelled" from
+    # "draft", "accepted", and "in_progress" -- for any of those starting
+    # statuses the condition's first clause was False, so the whole check
+    # was skipped and ANY authenticated user on the platform (any org,
+    # unrelated to this referral) could cancel it. Applies to every status
+    # cancellation is reachable from, not just two of the four.
+    if body.status == "cancelled" and not (referring_side or internal):
+        raise HTTPException(status_code=403, detail="Only the referring business can cancel a referral.")
     if body.status == "completed" and not (referring_side or partner_side or internal):
         raise HTTPException(status_code=403, detail="Only the referring business, the partner who delivered the service, or ROSKYRO can mark a referral as fully completed.")
     if body.status == "sent" and referral["status"] == "pending_review" and not internal:
@@ -532,6 +539,22 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
 
 
 @router.get("/{referral_id}/timeline")
-async def timeline(referral_id: str):
+async def timeline(referral_id: str, current_user: dict = Depends(get_current_user)):
+    """Fixed: this previously took no current_user and never checked
+    ownership, so any authenticated ROSKYRO user on the platform (any
+    business or partner, unrelated to this referral) could pull the full
+    status-change history of ANY other business's referral just by
+    guessing/knowing a referral_id -- same ownership rule as GET
+    /{referral_id} above."""
+    referral = await referrals.find_one({"_id": referral_id})
+    if not referral:
+        raise HTTPException(status_code=404, detail="Referral not found.")
+    partner = await partners.find_one({"_id": referral["partner_id"]})
+    partner_org_id = partner["org_id"] if partner else None
+    if current_user["appShell"] == "customer" and referral["referring_org_id"] != current_user["orgId"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view this referral.")
+    if current_user["appShell"] == "partner" and partner_org_id != current_user["orgId"]:
+        raise HTTPException(status_code=403, detail="Not authorized to view this referral.")
+
     history = await referral_status_history.find({"referral_id": referral_id}).sort("changed_at", 1).to_list(None)
     return {"timeline": to_out_many(history)}

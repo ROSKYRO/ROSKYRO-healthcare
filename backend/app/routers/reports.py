@@ -11,8 +11,16 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 @router.get("", dependencies=[Depends(get_current_user), Depends(require_plan("grow"))])
 @router.get("/", dependencies=[Depends(get_current_user), Depends(require_plan("grow"))])
 async def list_reports(orgId: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Only "customer" (own org) or "internal" with an explicit orgId may
+    # scope this query -- a "partner" shell previously fell into the same
+    # `else orgId` branch as internal, so a partner account could pass an
+    # arbitrary ?orgId= and read another business's data. Fixed: partner
+    # (and any other non-customer, non-internal shell) is rejected here.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
     rows = await reports.find({"org_id": org_id}).sort("period_month", -1).limit(24).to_list(None)
     return {"reports": to_out_many(rows)}

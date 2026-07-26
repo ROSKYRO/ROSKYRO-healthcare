@@ -4,6 +4,7 @@ from pymongo import ReturnDocument
 from app.db import organizations, booking_settings, appointments, booking_counters, doctors
 from app.utils.booking import doctor_slots_for_date, upcoming_dates
 from app.utils.ids import new_id, now, to_out
+from app.utils.counters import next_sequence
 
 router = APIRouter(prefix="/api/public/booking", tags=["public-booking"])
 
@@ -160,6 +161,21 @@ async def book_slot(org_id: str, body: dict):
     )
     token_number = token_counter["count"]
 
+    # A separate, GLOBALLY unique one-time booking code -- distinct from
+    # token_number above, which only counts turn-order within one doctor's
+    # one day and resets to 1 again tomorrow (so "token 3" exists for
+    # every doctor, every day -- useless as a lookup key). This code uses
+    # the same atomic $inc sequence pattern as referral codes/invoice
+    # numbers (see app/utils/counters.py) so it's never reused across ANY
+    # booking, by any doctor, on any day, ever. Shown to the patient
+    # alongside their token number so they can give it to front-desk staff
+    # later -- e.g. so a referring doctor can pull up this patient's name
+    # and phone instantly via GET /appointments/lookup/{booking_code}
+    # instead of re-typing them when creating a referral (see
+    # ReferralNew.jsx's quick-referral flow).
+    booking_seq = await next_sequence("appointment_booking_code", bootstrap=lambda: appointments.count_documents({}))
+    booking_code = f"BK-{str(booking_seq).zfill(6)}"
+
     fee = float(doctor.get("consultation_fee") or 0)
     # The frontend only calls this endpoint after the patient has already
     # been shown the clinic's UPI ID and self-confirmed they've paid (the
@@ -175,7 +191,7 @@ async def book_slot(org_id: str, body: dict):
         "doctor_id": doctor_id, "doctor_name": doctor.get("name"), "appointment_date": appointment_date,
         "appointment_time": appointment_time, "status": "scheduled", "source": "qr_booking",
         "is_new_patient": True, "revenue_amount": fee, "booked_via": "qr_booking",
-        "token_number": token_number, "payment_status": payment_status,
+        "token_number": token_number, "booking_code": booking_code, "payment_status": payment_status,
         "payment_amount": fee or None, "patient_note": note or None, "created_at": now(),
     }
     await appointments.insert_one(doc)
@@ -184,5 +200,6 @@ async def book_slot(org_id: str, body: dict):
         "appointment": to_out(doc),
         "payment": {"collected": True, "upiId": settings.get("upi_id"), "amount": fee} if fee > 0 else {"collected": False},
         "tokenNumber": token_number,
+        "bookingCode": booking_code,
         "doctor": {"id": doctor["_id"], "name": doctor["name"], "specialty": doctor.get("specialty")},
     }

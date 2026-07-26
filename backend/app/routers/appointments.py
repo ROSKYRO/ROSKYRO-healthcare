@@ -22,8 +22,16 @@ async def list_appointments(
     orgId: str | None = None, from_: str | None = Query(default=None, alias="from"), to: str | None = None,
     current_user: dict = Depends(get_current_user),
 ):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Only "customer" (own org) or "internal" with an explicit orgId may
+    # scope this query -- a "partner" shell previously fell into the same
+    # `else orgId` branch as internal, so a partner account could pass an
+    # arbitrary ?orgId= and read another business's data. Fixed: partner
+    # (and any other non-customer, non-internal shell) is rejected here.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
     filt: dict = {"org_id": org_id}
@@ -38,6 +46,27 @@ async def list_appointments(
     rows = await appointments.find(filt).to_list(None)
     rows.sort(key=lambda a: (a.get("appointment_date") or "", a.get("appointment_time") or ""), reverse=True)
     return {"appointments": to_out_many(rows[:200])}
+
+
+@router.get("/lookup/{booking_code}")
+async def lookup_by_booking_code(booking_code: str, current_user: dict = Depends(get_current_user)):
+    """Powers the quick-referral flow's booking-code auto-fill (see
+    ReferralNew.jsx): typing/scanning the unique code a patient got at QR
+    self-booking (see routers/public_booking.py's book_slot) pulls up
+    their name and phone instead of re-typing them. Scoped to the calling
+    business's own org, same as every other appointments endpoint -- a
+    code from one business's QR booking can't be used to pull up a
+    patient at another. Only ever matches QR bookings (manually-created
+    appointments via POST below never get a booking_code), which is
+    exactly the "no booking id -> fill it in by hand" fallback case."""
+    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else None
+    if not org_id:
+        raise HTTPException(status_code=400, detail="Only a healthcare business user can look up a booking.")
+
+    appt = await appointments.find_one({"org_id": org_id, "booking_code": booking_code.strip().upper()})
+    if not appt:
+        raise HTTPException(status_code=404, detail="No booking found with that code -- enter the patient's details manually.")
+    return {"appointment": to_out(appt)}
 
 
 @router.get("/daily-pdf")
@@ -69,8 +98,16 @@ async def daily_paid_appointments_pdf(
     except ValueError:
         raise HTTPException(status_code=400, detail="date must be in YYYY-MM-DD format.")
 
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Only "customer" (own org) or "internal" with an explicit orgId may
+    # scope this query -- a "partner" shell previously fell into the same
+    # `else orgId` branch as internal, so a partner account could pass an
+    # arbitrary ?orgId= and read another business's data. Fixed: partner
+    # (and any other non-customer, non-internal shell) is rejected here.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
     org = await organizations.find_one({"_id": org_id})
@@ -174,7 +211,21 @@ async def create_appointment(body: dict, current_user: dict = Depends(get_curren
 
 
 @router.patch("/{appointment_id}")
-async def patch_appointment(appointment_id: str, body: dict):
+async def patch_appointment(appointment_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    """Fixed IDOR: this previously took no current_user and never checked
+    ownership, so any authenticated user (any org) could rewrite ANY
+    business's appointment status/revenue/payment just by guessing/knowing
+    an appointment_id -- same bug class fixed together across patients.py/
+    billing.py/followups.py/queue.py."""
+    existing = await appointments.find_one({"_id": appointment_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and existing["org_id"] == current_user["orgId"])
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
     updates = {}
     if body.get("status"):
         updates["status"] = body["status"]
@@ -189,6 +240,4 @@ async def patch_appointment(appointment_id: str, body: dict):
 
     await appointments.update_one({"_id": appointment_id}, {"$set": updates})
     updated = await appointments.find_one({"_id": appointment_id})
-    if not updated:
-        raise HTTPException(status_code=404, detail="Appointment not found.")
     return {"appointment": to_out(updated)}

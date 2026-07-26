@@ -21,17 +21,31 @@ async def team_roster():
     '/{task_id}'-shaped routes (there are none here besides PATCH, so no
     ordering hazard, but kept explicit for clarity)."""
     all_users = await users.find({"role": {"$regex": "^roskyro_"}}).sort([("role", 1), ("name", 1)]).to_list(None)
+
+    # One query for every internal user's tasks, then tally per-user in
+    # Python -- not 3 count_documents() calls PER user (a 1+3*N query
+    # pattern that scaled with headcount), same batch-fetch fix used
+    # elsewhere in this file's list_tasks (org/assigned-user $in lookups).
+    user_ids = [u["_id"] for u in all_users]
+    all_tasks = await tasks.find({"assigned_to": {"$in": user_ids}}).to_list(None) if user_ids else []
+    right_now = now()
+    counts_by_user: dict = {}
+    for t in all_tasks:
+        c = counts_by_user.setdefault(t["assigned_to"], {"open": 0, "overdue": 0, "completed": 0})
+        if t["status"] == "done":
+            c["completed"] += 1
+        else:
+            c["open"] += 1
+            if t.get("sla_due_at") and as_aware(t["sla_due_at"]) < right_now:
+                c["overdue"] += 1
+
     roster = []
     for u in all_users:
-        open_tasks = await tasks.count_documents({"assigned_to": u["_id"], "status": {"$ne": "done"}})
-        overdue_tasks = await tasks.count_documents({
-            "assigned_to": u["_id"], "status": {"$ne": "done"}, "sla_due_at": {"$lt": now()},
-        })
-        completed_tasks = await tasks.count_documents({"assigned_to": u["_id"], "status": "done"})
+        c = counts_by_user.get(u["_id"], {"open": 0, "overdue": 0, "completed": 0})
         roster.append({
             "id": u["_id"], "name": u.get("name"), "email": u.get("email"),
             "role": u.get("role"), "status": u.get("status"),
-            "open_tasks": open_tasks, "overdue_tasks": overdue_tasks, "completed_tasks": completed_tasks,
+            "open_tasks": c["open"], "overdue_tasks": c["overdue"], "completed_tasks": c["completed"],
         })
     return {"roster": roster}
 

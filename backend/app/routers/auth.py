@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -59,10 +61,15 @@ async def login(body: LoginBody):
     since phone numbers never contain one."""
     identifier = body.identifier.strip()
     if "@" in identifier:
-        user = await users.find_one({"email": {"$regex": f"^{identifier}$", "$options": "i"}})
+        # re.escape() so login can't be used as a NoSQL-regex injection
+        # vector -- an unescaped identifier like ".*" or "(a|b)" would
+        # match by pattern instead of exact value, defeating the intended
+        # exact (case-insensitive) match and risking ReDoS on this
+        # unauthenticated endpoint.
+        user = await users.find_one({"email": {"$regex": f"^{re.escape(identifier)}$", "$options": "i"}})
     else:
         normalized = normalize_phone(identifier)
-        user = await users.find_one({"phone": {"$regex": f"{normalized}$"}}) if normalized else None
+        user = await users.find_one({"phone": {"$regex": f"{re.escape(normalized)}$"}}) if normalized else None
 
     if not user:
         raise HTTPException(status_code=401, detail="Invalid mobile number/email or password.")
@@ -104,14 +111,14 @@ async def register(body: RegisterBody):
     sequential best-effort sequence rather than a single ACID transaction --
     on a real MongoDB deployment this could be wrapped in a client session
     transaction with zero other code changes."""
-    existing = await users.find_one({"email": {"$regex": f"^{body.email}$", "$options": "i"}})
+    existing = await users.find_one({"email": {"$regex": f"^{re.escape(body.email)}$", "$options": "i"}})
     if existing:
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
 
     normalized_phone = normalize_phone(body.phone)
     if len(normalized_phone) != 10:
         raise HTTPException(status_code=400, detail="Please enter a valid 10-digit mobile number.")
-    existing_phone = await users.find_one({"phone": {"$regex": f"{normalized_phone}$"}})
+    existing_phone = await users.find_one({"phone": {"$regex": f"{re.escape(normalized_phone)}$"}})
     if existing_phone:
         raise HTTPException(status_code=409, detail="An account with this mobile number already exists.")
 

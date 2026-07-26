@@ -29,8 +29,16 @@ def compute_totals(line_items: list, discount: float = 0, tax_rate: float = 0) -
 @router.get("")
 @router.get("/")
 async def list_invoices(orgId: str | None = None, status: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Only "customer" (own org) or "internal" with an explicit orgId may
+    # scope this query -- a "partner" shell previously fell into the same
+    # `else orgId` branch as internal, so a partner account could pass an
+    # arbitrary ?orgId= and read another business's data. Fixed: partner
+    # (and any other non-customer, non-internal shell) is rejected here.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
     filt: dict = {"org_id": org_id}
@@ -66,7 +74,21 @@ async def create_invoice(body: dict, current_user: dict = Depends(get_current_us
 
 
 @router.patch("/{invoice_id}")
-async def patch_invoice(invoice_id: str, body: dict):
+async def patch_invoice(invoice_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    """Fixed IDOR: this previously took no current_user and never checked
+    ownership, so any authenticated user (any org) could mark ANY
+    business's invoice paid/cancelled just by guessing/knowing an
+    invoice_id -- same bug class fixed together across patients.py/
+    followups.py/queue.py/appointments.py."""
+    existing = await invoices.find_one({"_id": invoice_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and existing["org_id"] == current_user["orgId"])
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
     status = body.get("status")
     if status not in ("draft", "sent", "paid", "overdue", "cancelled"):
         raise HTTPException(status_code=400, detail="Invalid status.")
@@ -77,6 +99,4 @@ async def patch_invoice(invoice_id: str, body: dict):
 
     await invoices.update_one({"_id": invoice_id}, {"$set": updates})
     updated = await invoices.find_one({"_id": invoice_id})
-    if not updated:
-        raise HTTPException(status_code=404, detail="Invoice not found.")
     return {"invoice": to_out(updated)}

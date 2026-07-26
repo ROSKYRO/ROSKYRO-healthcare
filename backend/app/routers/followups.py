@@ -14,8 +14,16 @@ router = APIRouter(
 @router.get("")
 @router.get("/")
 async def list_followups(orgId: str | None = None, status: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Only "customer" (own org) or "internal" with an explicit orgId may
+    # scope this query -- a "partner" shell previously fell into the same
+    # `else orgId` branch as internal, so a partner account could pass an
+    # arbitrary ?orgId= and read another business's data. Fixed: partner
+    # (and any other non-customer, non-internal shell) is rejected here.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
     filt: dict = {"org_id": org_id}
@@ -45,7 +53,21 @@ async def create_followup(body: dict, current_user: dict = Depends(get_current_u
 
 
 @router.patch("/{followup_id}")
-async def patch_followup(followup_id: str, body: dict):
+async def patch_followup(followup_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    """Fixed IDOR: this previously took no current_user and never checked
+    ownership, so any authenticated user (any org) could rewrite ANY
+    business's patient follow-up record just by guessing/knowing a
+    followup_id -- same bug class fixed together across patients.py/
+    billing.py/queue.py/appointments.py."""
+    existing = await patient_followups.find_one({"_id": followup_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Follow-up not found.")
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and existing["org_id"] == current_user["orgId"])
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
     updates = {}
     if body.get("status"):
         if body["status"] not in ("pending", "contacted", "done", "missed"):
@@ -60,6 +82,4 @@ async def patch_followup(followup_id: str, body: dict):
 
     await patient_followups.update_one({"_id": followup_id}, {"$set": updates})
     updated = await patient_followups.find_one({"_id": followup_id})
-    if not updated:
-        raise HTTPException(status_code=404, detail="Follow-up not found.")
     return {"followup": to_out(updated)}

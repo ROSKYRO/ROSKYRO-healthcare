@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.db import organizations, users, organization_subscriptions, plans as plans_collection
@@ -167,14 +169,14 @@ async def invite_team_member(org_id: str, body: dict, current_user: dict = Depen
     if not name or not email or not role or not phone or not password:
         raise HTTPException(status_code=400, detail="name, email, mobile number, role and password are required.")
 
-    existing = await users.find_one({"email": {"$regex": f"^{email}$", "$options": "i"}})
+    existing = await users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     if existing:
         raise HTTPException(status_code=409, detail="A user with this email already exists.")
 
     normalized_phone = normalize_phone(phone)
     if len(normalized_phone) != 10:
         raise HTTPException(status_code=400, detail="Please enter a valid 10-digit mobile number.")
-    existing_phone = await users.find_one({"phone": {"$regex": f"{normalized_phone}$"}})
+    existing_phone = await users.find_one({"phone": {"$regex": f"{re.escape(normalized_phone)}$"}})
     if existing_phone:
         raise HTTPException(status_code=409, detail="A user with this mobile number already exists.")
 

@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
@@ -37,10 +39,12 @@ async def submit_request(body: SubmitBody):
         raise HTTPException(status_code=400, detail="Please enter your mobile number or email.")
 
     if "@" in identifier:
-        user = await users.find_one({"email": {"$regex": f"^{identifier}$", "$options": "i"}})
+        # re.escape() -- see auth.py's login() for why: this is another
+        # unauthenticated, user-controlled regex lookup.
+        user = await users.find_one({"email": {"$regex": f"^{re.escape(identifier)}$", "$options": "i"}})
     else:
         normalized = normalize_phone(identifier)
-        user = await users.find_one({"phone": {"$regex": f"{normalized}$"}}) if normalized else None
+        user = await users.find_one({"phone": {"$regex": f"{re.escape(normalized)}$"}}) if normalized else None
 
     if not user:
         # Deliberately vague (no user enumeration) but still actionable --

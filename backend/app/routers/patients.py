@@ -75,7 +75,23 @@ ALLOWED_PATCH = {
 
 
 @router.patch("/{patient_id}")
-async def patch_patient(patient_id: str, body: dict):
+async def patch_patient(patient_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    """Fixed IDOR: this previously took no current_user and never checked
+    ownership, so any authenticated user (any org, even a partner account)
+    could rewrite ANY business's patient record just by guessing/knowing a
+    patient_id -- same bug class as billing.py/followups.py/queue.py/
+    appointments.py's PATCH endpoints, all fixed together. Same ownership
+    rule as GET /{patient_id} above: the owning business (any of its
+    users, not owner-only -- mirrors that endpoint) or ROSKYRO internal."""
+    existing = await patients.find_one({"_id": patient_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and existing["org_id"] == current_user["orgId"])
+    ):
+        raise HTTPException(status_code=403, detail="Not authorized.")
+
     updates = {}
     for camel, snake in ALLOWED_PATCH.items():
         if camel in body:
@@ -86,6 +102,4 @@ async def patch_patient(patient_id: str, body: dict):
 
     await patients.update_one({"_id": patient_id}, {"$set": updates})
     updated = await patients.find_one({"_id": patient_id})
-    if not updated:
-        raise HTTPException(status_code=404, detail="Patient not found.")
     return {"patient": to_out(updated)}
