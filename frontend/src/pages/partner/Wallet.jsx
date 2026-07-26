@@ -3,8 +3,18 @@ import clsx from 'clsx';
 import api from '../../lib/api';
 import { Card, CardHeader, Table, Badge, Button, Input, PageLoading, formatCurrency, formatDate, formatDateTime } from '../../components/ui';
 
-function MarketingFeeRateSettings({ partner, onSaved }) {
-  const [amount, setAmount] = useState(partner.referral_bonus_amount ?? '');
+function MarketingFeeRateSettings({ partner, myRate, onSaved }) {
+  // `myRate` (from GET /settlements/my-rate) is the partner's OWN explicit
+  // rate -- null if they've never set one. `partner.referral_bonus_amount`
+  // (from GET /partners/me) is the EFFECTIVE amount currently shown to
+  // businesses in the Partner Directory, which falls back to ROSKYRO's
+  // category/platform default when the partner hasn't set their own --
+  // these two are deliberately kept separate so the input below only ever
+  // reflects what THIS partner actually chose, never a default they never
+  // agreed to (saving an unedited pre-filled default would silently lock
+  // it in as if they'd chosen it themselves).
+  const ownAmount = myRate?.flat_fee_amount;
+  const [amount, setAmount] = useState(ownAmount ?? '');
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
@@ -33,6 +43,13 @@ function MarketingFeeRateSettings({ partner, onSaved }) {
         subtitle="Har patient referral ek business dwara aapke liye ki gayi marketing maana jaata hai — isliye aap har completed referral par ROSKYRO ko kitna flat Marketing Fee (₹ rupees me) doge, wo yahan set karo. Ye amount Partner Directory me har business ko publicly dikhega. Koi percentage/commission nahi — sirf ek fixed rupee amount, aur ye seedha ROSKYRO ko jaata hai, referring business ko nahi."
       />
       <form onSubmit={save} className="px-5 pb-5 space-y-4">
+        {ownAmount == null && partner.referral_bonus_amount != null && (
+          <p className="text-xs text-gray-500">
+            Aapne abhi tak apna khud ka rate set nahi kiya — filhaal businesses ko ROSKYRO ka default fee{' '}
+            <span className="font-semibold text-gray-700">{formatCurrency(partner.referral_bonus_amount)}</span> (aapki
+            category ke hisab se) dikh raha hai. Neeche apna khud ka amount set karke isse override kar sakte ho.
+          </p>
+        )}
         <Input
           label="Marketing Fee per referral (₹)"
           type="number" min="0" step="10"
@@ -46,7 +63,7 @@ function MarketingFeeRateSettings({ partner, onSaved }) {
           <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save Marketing Fee'}</Button>
           {saved && <span className="text-sm text-emerald-600 font-medium">Saved ✓</span>}
         </div>
-        {partner.referral_bonus_amount == null && (
+        {ownAmount == null && partner.referral_bonus_amount == null && (
           <p className="text-xs text-rose-500">
             Abhi tak koi Marketing Fee amount set nahi hai — jab tak set nahi karoge, Partner Directory me businesses ko
             "Marketing Fee not set" dikhega, jo unhein aapko partner banane se rok sakta hai.
@@ -80,13 +97,15 @@ function WhereToPay({ roskyroUpiId }) {
 export default function Wallet() {
   const [settlements, setSettlements] = useState(null);
   const [partner, setPartner] = useState(null);
+  const [myRate, setMyRate] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [refDrafts, setRefDrafts] = useState({});
 
   const load = useCallback(() => {
-    Promise.all([api.get('/settlements'), api.get('/partners/me')]).then(([s, p]) => {
+    Promise.all([api.get('/settlements'), api.get('/partners/me'), api.get('/settlements/my-rate')]).then(([s, p, mr]) => {
       setSettlements(s.data.settlements);
       setPartner(p.data.partner);
+      setMyRate(mr.data.rate);
     });
   }, []);
 
@@ -144,7 +163,7 @@ export default function Wallet() {
         </Card>
       </div>
 
-      <MarketingFeeRateSettings partner={partner} onSaved={load} />
+      <MarketingFeeRateSettings partner={partner} myRate={myRate} onSaved={load} />
 
       <WhereToPay roskyroUpiId={roskyroUpiId} />
 
