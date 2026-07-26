@@ -12,6 +12,7 @@ from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.counters import next_sequence
+from app.utils.whatsapp_sender import dispatch_message
 
 router = APIRouter(
     prefix="/api/referrals",
@@ -120,14 +121,16 @@ async def _notify_patient_whatsapp(referral: dict, event: str) -> dict | None:
     if not message:
         return None
 
-    doc = {
-        "_id": new_id(), "org_id": referral["referring_org_id"], "referral_id": referral["_id"],
-        "patient_name": referral["patient_name"], "patient_phone": referral["patient_phone"],
-        "direction": "outbound", "template_name": f"referral_{event}", "message": message,
-        "status": "sent", "sent_by": None, "created_at": now(),
-    }
-    await whatsapp_messages.insert_one(doc)
-    return doc
+    # Routed through the shared dispatch choke point (app/utils/
+    # whatsapp_sender.py) instead of inserting straight into
+    # whatsapp_messages -- this is what makes the centralized-queue
+    # send flow (and, later, a real WhatsApp API) apply here too, with
+    # zero changes needed in this file if the delivery mode ever changes.
+    return await dispatch_message(
+        org_id=referral["referring_org_id"], referral_id=referral["_id"],
+        patient_name=referral["patient_name"], patient_phone=referral["patient_phone"],
+        message=message, template_name=f"referral_{event}",
+    )
 
 
 async def _enrich_list(rows: list[dict]) -> list[dict]:
