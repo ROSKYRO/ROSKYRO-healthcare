@@ -225,6 +225,7 @@ export default function ReferralNew() {
                     <p className="text-xs text-gray-500">{p.category_name} · {p.city || 'City n/a'}</p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {p.is_my_partner && <Badge tone="verified">★ Your Partner</Badge>}
                     {p.verification_status === 'verified' ? <Badge tone="verified">verified</Badge> : <Badge tone="pending">pending</Badge>}
                     <span className="text-sm text-brand-700 font-medium">
                       {referringPartnerId === p.id ? 'Referring…' : 'Refer →'}
