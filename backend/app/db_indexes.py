@@ -65,7 +65,9 @@ _INDEX_PLAN = [
     (queue_entries, [[("org_id", 1), ("checked_in_at", 1)]]),
     (patient_followups, [[("org_id", 1), ("patient_name", 1)]]),
     (invoices, [[("org_id", 1), ("status", 1)], "patient_name"]),
-    (whatsapp_messages, ["org_id", "referral_id", "patient_name"]),
+    # "status" added for the platform-wide (no org_id filter) WhatsApp
+    # Queue view -- see routers/whatsapp.py's GET /queue.
+    (whatsapp_messages, ["org_id", "referral_id", "patient_name", "status"]),
     (doctors, [[("org_id", 1), ("is_active", 1)]]),
     (password_reset_requests, [[("user_id", 1), ("status", 1)]]),
     (newsletter_subscribers, ["email"]),

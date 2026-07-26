@@ -30,3 +30,21 @@ CLIENT_ORIGIN = os.getenv("CLIENT_ORIGIN", "http://localhost:3000")
 # production, same as JWT_SECRET above.
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@roskyro.com")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Roskyro@123")
+
+# How patient-facing WhatsApp messages actually go out -- see
+# app/utils/whatsapp_sender.py for the full explanation. "queue" (default)
+# is the free, no-API-contract approach: messages queue up centrally and a
+# ROSKYRO ops user dispatches them by hand via a pre-filled wa.me
+# click-to-chat link, from ONE shared WhatsApp Web/Business session --
+# solves the "one WhatsApp login can't run on every business's own
+# computer" problem without paying for the official API. Set
+# WHATSAPP_MODE=api once a real WhatsApp Business/Cloud API integration is
+# wired up in that module's `_send_via_official_api` -- no calling code
+# (referrals.py, whatsapp.py) needs to change either way.
+WHATSAPP_MODE = os.getenv("WHATSAPP_MODE", "queue")
+# Placeholders for that future official-API integration -- intentionally
+# unset today. Per the standing rule for this project, real values for
+# these belong ONLY in the hosting platform's environment-variable UI
+# (Railway's Variables tab), never committed to source or seed data.
+WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN")
+WHATSAPP_API_PHONE_NUMBER_ID = os.getenv("WHATSAPP_API_PHONE_NUMBER_ID")
