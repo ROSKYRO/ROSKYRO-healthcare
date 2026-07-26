@@ -60,6 +60,13 @@ CATEGORY_GROUPS = [
     # xray_centers, usg_centers, ct_scan_centers, mri_centers) are kept
     # unchanged since seed data below already references them; new
     # categories from the expanded list are appended.
+    #
+    # Further expanded per the user's follow-up list: renamed pet_scan_centers
+    # / pft_centers display names to match the user's exact wording ("PET-CT
+    # Centers" / "Pulmonary Function Labs" -- slugs untouched since seed data
+    # already references them), and added 8 new leaf categories (mammography,
+    # DEXA, cardiology/neurology diagnostic centers, histopathology, genetic
+    # testing, molecular diagnostics, microbiology) that weren't covered yet.
     ("diagnostics_imaging", "🧪 Diagnostics & Imaging", [
         ("blood_test_labs", "Blood Test Labs"),
         ("pathology_labs", "Pathology Labs"),
@@ -69,12 +76,20 @@ CATEGORY_GROUPS = [
         ("usg_centers", "Ultrasound / Sonography Centers"),
         ("ct_scan_centers", "CT Scan Centers"),
         ("mri_centers", "MRI Scan Centers"),
-        ("pet_scan_centers", "PET Scan Centers"),
+        ("pet_scan_centers", "PET-CT Centers"),
+        ("mammography_centers", "Mammography Centers"),
+        ("dexa_scan_centers", "DEXA Scan Centers"),
+        ("cardiology_diagnostic_centers", "Cardiology Diagnostic Centers"),
+        ("neurology_diagnostic_centers", "Neurology Diagnostic Centers"),
         ("ecg_centers", "ECG Centers"),
         ("eeg_centers", "EEG Centers"),
         ("emg_ncv_centers", "EMG / NCV Centers"),
-        ("pft_centers", "Pulmonary Function Test (PFT) Centers"),
+        ("pft_centers", "Pulmonary Function Labs"),
         ("sleep_study_labs", "Sleep Study Labs"),
+        ("histopathology_labs", "Histopathology Labs"),
+        ("genetic_testing_labs", "Genetic Testing Labs"),
+        ("molecular_diagnostic_labs", "Molecular Diagnostic Labs"),
+        ("microbiology_labs", "Microbiology Labs"),
     ]),
     # Renamed "Rehabilitation" -> "Rehabilitation & Therapy" and expanded
     # with the additional therapy categories from the user's list.
