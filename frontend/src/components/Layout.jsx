@@ -33,6 +33,7 @@ const NAV = {
     // items are hidden for them since there's nothing for them to do here.
     { to: '/app/referrals', label: 'Referral Network', icon: '\u{1F91D}', pillar: 'connect', requiresReferralRights: true },
     { to: '/app/partners', label: 'Partner Directory', icon: '\u{1F4D1}', pillar: 'connect', requiresReferralRights: true },
+    { to: '/app/partnerships', label: 'My Partners', icon: '\u{2B50}', pillar: 'connect', requiresReferralRights: true },
     { to: '/app/settlements', label: 'Marketing Fee Payouts', icon: '\u{1F4B0}', pillar: 'connect', requiresReferralRights: true },
     { section: null },
     { to: '/app/approvals', label: 'Pending Approvals', icon: '\u{2705}' },
@@ -42,6 +43,7 @@ const NAV = {
   partner: [
     { to: '/partner', label: 'Dashboard', icon: '\u{1F3E0}', end: true },
     { to: '/partner/requests', label: 'Referral Requests', icon: '\u{1F4E5}' },
+    { to: '/partner/partnerships', label: 'Partnerships', icon: '\u{2B50}' },
     { to: '/partner/wallet', label: 'Wallet', icon: '\u{1F4B0}' },
   ],
   internal: [
