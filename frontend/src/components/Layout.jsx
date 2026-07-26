@@ -52,7 +52,13 @@ const NAV = {
     { to: '/team/partner-verification', label: 'Partner Verification', icon: '\u{1F510}' },
     { to: '/team/settlements', label: 'Settlements', icon: '\u{1F4B0}' },
     { to: '/team/marketing-payouts', label: 'Marketing Fee Payouts', icon: '\u{1F4E4}' },
+    { to: '/team/subscription-renewals', label: 'Subscription Renewals', icon: '\u{1F501}' },
     { to: '/team/roster', label: 'Team Roster', icon: '\u{1F465}' },
+    // Super-admin only — the consolidated Earnings Wallet rolls up both
+    // revenue streams (Marketing Fees + subscription renewals) and the
+    // business-wise payout breakdown in one place, same restriction as
+    // Pricing & Payments below.
+    { to: '/team/wallet', label: 'Earnings Wallet', icon: '\u{1F4B0}', roles: ['roskyro_admin'] },
     // Super-admin only — pricing & UPI payment settings live behind this,
     // never shown to other internal roles (ops/growth/content/etc).
     { to: '/team/pricing', label: 'Pricing & Payments', icon: '\u{1F4B3}', roles: ['roskyro_admin'] },
