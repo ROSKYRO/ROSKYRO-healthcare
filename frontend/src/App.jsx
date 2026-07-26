@@ -21,6 +21,7 @@ import CustomerDashboard from './pages/customer/Dashboard';
 import Referrals from './pages/customer/Referrals';
 import ReferralNew from './pages/customer/ReferralNew';
 import PartnerDirectory from './pages/customer/PartnerDirectory';
+import Partnerships from './pages/customer/Partnerships';
 import BecomePartner from './pages/customer/BecomePartner';
 import Appointments from './pages/customer/Appointments';
 import Reviews from './pages/customer/Reviews';
@@ -40,6 +41,7 @@ import CustomerSettlements from './pages/customer/Settlements';
 
 import PartnerDashboard from './pages/partner/Dashboard';
 import PartnerRequests from './pages/partner/Requests';
+import PartnerPartnerships from './pages/partner/Partnerships';
 import Wallet from './pages/partner/Wallet';
 
 import InternalDashboard from './pages/internal/Dashboard';
@@ -85,6 +87,7 @@ export default function App() {
           <Route path="/app/referrals/:id" element={<ProtectedRoute allow={['customer']}><ReferralDetail basePath="/app/referrals" /></ProtectedRoute>} />
           <Route path="/app/become-partner" element={<ProtectedRoute allow={['customer']}><BecomePartner /></ProtectedRoute>} />
           <Route path="/app/partners" element={<ProtectedRoute allow={['customer']}><PartnerDirectory /></ProtectedRoute>} />
+          <Route path="/app/partnerships" element={<ProtectedRoute allow={['customer']}><Partnerships /></ProtectedRoute>} />
           <Route path="/app/settlements" element={<ProtectedRoute allow={['customer']}><CustomerSettlements /></ProtectedRoute>} />
           <Route path="/app/appointments" element={<ProtectedRoute allow={['customer']}><Appointments /></ProtectedRoute>} />
           <Route path="/app/reviews" element={<ProtectedRoute allow={['customer']}><Reviews /></ProtectedRoute>} />
@@ -105,6 +108,7 @@ export default function App() {
           <Route path="/partner" element={<ProtectedRoute allow={['partner']}><PartnerDashboard /></ProtectedRoute>} />
           <Route path="/partner/requests" element={<ProtectedRoute allow={['partner']}><PartnerRequests /></ProtectedRoute>} />
           <Route path="/partner/requests/:id" element={<ProtectedRoute allow={['partner']}><ReferralDetail basePath="/partner/requests" /></ProtectedRoute>} />
+          <Route path="/partner/partnerships" element={<ProtectedRoute allow={['partner']}><PartnerPartnerships /></ProtectedRoute>} />
           <Route path="/partner/wallet" element={<ProtectedRoute allow={['partner']}><Wallet /></ProtectedRoute>} />
 
           {/* Internal ROSKYRO team dashboard */}
