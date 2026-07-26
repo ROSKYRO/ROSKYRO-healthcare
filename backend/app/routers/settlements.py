@@ -3,8 +3,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.db import settlement_rules, settlements, referrals, organizations, partners, statements, platform_settings, marketing_payouts
-from app.auth import get_current_user, require_internal
+from app.db import settlement_rules, settlements, referrals, organizations, partners, partner_categories, statements, platform_settings, marketing_payouts
+from app.auth import get_current_user, require_internal, require_roles
 from app.utils.roles import is_internal
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now, to_out, to_out_many
@@ -110,14 +110,129 @@ async def set_my_rate(body: ReferralBonusRateBody, current_user: dict = Depends(
     return {"rate": to_out(updated)}
 
 
-@router.post("/rules", status_code=201, dependencies=[Depends(require_internal)])
+class PlatformRateBody(BaseModel):
+    flatFeeAmount: float | None = None
+
+
+@router.get("/platform-rate", dependencies=[Depends(require_internal)])
+async def get_platform_rate():
+    """The platform-wide fallback Marketing Fee -- only used when a
+    completed referral matches none of the more specific rules (a
+    negotiated org_partner_pair override, the partner's own self-set rate,
+    a business-specific org override, or the partner's category default).
+    See the resolution order in routers/referrals.py."""
+    rule = await settlement_rules.find_one({"scope": "platform", "is_active": True})
+    return {"rate": to_out(rule)}
+
+
+@router.put("/platform-rate", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def set_platform_rate(body: PlatformRateBody, current_user: dict = Depends(get_current_user)):
+    if body.flatFeeAmount is not None and body.flatFeeAmount < 0:
+        raise HTTPException(status_code=400, detail="Marketing Fee amount cannot be negative.")
+    settlement_type = "flat_fee" if body.flatFeeAmount is not None else "none"
+    existing = await settlement_rules.find_one({"scope": "platform", "is_active": True})
+    if existing:
+        await settlement_rules.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"settlement_type": settlement_type, "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None, "updated_at": now()}},
+        )
+        rule_id = existing["_id"]
+    else:
+        rule_id = new_id()
+        await settlement_rules.insert_one({
+            "_id": rule_id, "scope": "platform", "org_id": None, "partner_id": None, "category_id": None,
+            "settlement_type": settlement_type, "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None,
+            "custom_terms": None, "is_active": True, "created_by": current_user["id"], "created_at": now(),
+        })
+    updated = await settlement_rules.find_one({"_id": rule_id})
+    await log_audit(current_user["id"], "settlement_rule.platform_rate_updated", "settlement_rule", rule_id, {"flatFeeAmount": body.flatFeeAmount})
+    return {"rate": to_out(updated)}
+
+
+@router.get("/category-rates", dependencies=[Depends(require_internal)])
+async def list_category_rates():
+    """Every Networking Marketing partner category alongside its own
+    category-level default Marketing Fee (if ROSKYRO has set one). Exists
+    because a partner's own self-set flat fee (or the platform default, if
+    they haven't set one) previously applied the exact same rupee amount
+    whether the completed referral was for a ~₹200 blood test or an
+    ~₹8,000 MRI scan -- this lets ROSKYRO set sensible category-appropriate
+    defaults (e.g. a lower default for Blood Test Labs, a higher one for
+    MRI Centers) that only kick in when nothing more specific (a
+    negotiated business-partner pair, the partner's own rate, or a
+    business-specific override) applies. See the resolution order in
+    routers/referrals.py."""
+    cats = await partner_categories.find({"is_active": True}).sort([("sort_order", 1), ("name", 1)]).to_list(None)
+    rules = await settlement_rules.find({"scope": "category", "is_active": True}).to_list(None)
+    rule_by_cat = {r["category_id"]: r for r in rules}
+    out = []
+    for c in cats:
+        rule = rule_by_cat.get(c["_id"])
+        out.append({
+            "category_id": c["_id"], "category_name": c["name"], "category_slug": c["slug"],
+            "group_name": c["group_name"], "group_slug": c["group_slug"],
+            "flat_fee_amount": rule.get("flat_fee_amount") if rule else None,
+            "settlement_type": rule.get("settlement_type") if rule else "none",
+        })
+    return {"categoryRates": out}
+
+
+class CategoryRateBody(BaseModel):
+    flatFeeAmount: float | None = None
+
+
+@router.put("/category-rates/{category_id}", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def set_category_rate(category_id: str, body: CategoryRateBody, current_user: dict = Depends(get_current_user)):
+    cat = await partner_categories.find_one({"_id": category_id})
+    if not cat:
+        raise HTTPException(status_code=404, detail="Unknown category.")
+    if body.flatFeeAmount is not None and body.flatFeeAmount < 0:
+        raise HTTPException(status_code=400, detail="Marketing Fee amount cannot be negative.")
+    settlement_type = "flat_fee" if body.flatFeeAmount is not None else "none"
+    existing = await settlement_rules.find_one({"scope": "category", "category_id": category_id, "is_active": True})
+    if existing:
+        await settlement_rules.update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"settlement_type": settlement_type, "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None, "updated_at": now()}},
+        )
+        rule_id = existing["_id"]
+    else:
+        rule_id = new_id()
+        await settlement_rules.insert_one({
+            "_id": rule_id, "scope": "category", "org_id": None, "partner_id": None, "category_id": category_id,
+            "settlement_type": settlement_type, "flat_fee_amount": body.flatFeeAmount, "percentage_rate": None,
+            "custom_terms": None, "is_active": True, "created_by": current_user["id"], "created_at": now(),
+        })
+    updated = await settlement_rules.find_one({"_id": rule_id})
+    await log_audit(current_user["id"], "settlement_rule.category_rate_updated", "settlement_rule", rule_id, {"categoryId": category_id, "flatFeeAmount": body.flatFeeAmount})
+    return {"rate": to_out(updated)}
+
+
+@router.post("/rules", status_code=201, dependencies=[Depends(require_roles("roskyro_admin"))])
 async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_user)):
-    if body.scope not in ("platform", "org", "partner", "org_partner_pair"):
+    if body.scope not in ("platform", "org", "partner", "org_partner_pair", "category"):
         raise HTTPException(status_code=400, detail="Invalid scope.")
+    if body.scope == "category" and not body.categoryId:
+        raise HTTPException(status_code=400, detail="categoryId is required for the category scope.")
     # Percentage-based settlement has been removed entirely -- Referral
     # Bonus is always a flat rupee amount (or "none"/"custom").
     if body.settlementType not in ("none", "flat_fee", "custom"):
         raise HTTPException(status_code=400, detail="Invalid settlementType.")
+
+    if body.scope == "category":
+        # Guard against ending up with two simultaneously-active "category"
+        # rules for the same category_id -- set_category_rate (the PUT
+        # /category-rates/{id} endpoint the admin UI actually uses) already
+        # upserts safely, but this generic endpoint used to insert
+        # unconditionally, so a rule created here could silently coexist
+        # with one later edited via the UI. The referral-completion
+        # resolution loop's find_one({"scope": "category", ...}) would then
+        # return whichever of the two Mongo happens to pick, independently
+        # of what the admin UI last showed as saved.
+        await settlement_rules.update_many(
+            {"scope": "category", "category_id": body.categoryId, "is_active": True},
+            {"$set": {"is_active": False, "updated_at": now()}},
+        )
 
     doc = {
         "_id": new_id(), "scope": body.scope, "org_id": body.orgId, "partner_id": body.partnerId,

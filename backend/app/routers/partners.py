@@ -21,22 +21,55 @@ router = APIRouter(
 )
 
 
-async def _referral_bonus_amounts_for(partner_ids: list[str]) -> dict:
+async def _referral_bonus_amounts_for(partner_docs: list[dict]) -> dict:
     """Each partner can self-declare the default Referral Bonus -- a flat
     rupee amount, not a percentage -- they pay a referring business per
-    completed referral (see `settlements.py`'s `/my-rate` endpoint) --
-    this is just the 'partner' scope settlement rule, the same one the
-    referral-completion settlement engine already resolves against (see
-    routers/referrals.py). Surfaced here so the partner directory can show
-    it to businesses deciding who to partner with, without duplicating the
-    amount anywhere."""
-    if not partner_ids:
+    completed referral (see `settlements.py`'s `/my-rate` endpoint). Surfaced
+    here so the partner directory can show it to businesses deciding who to
+    partner with, without duplicating the amount anywhere.
+
+    Mirrors (a subset of) the same fallback chain routers/referrals.py uses
+    at referral-completion time: the partner's own rate -> their category's
+    default (see /settlements/category-rates) -> the platform default.
+    Deliberately excludes the business-specific org/org_partner_pair tiers --
+    those only apply once a referral actually exists between one specific
+    referring business and this partner, which isn't meaningful for a
+    directory being browsed generically. Without this fallback, a partner
+    that hasn't self-set a rate would misleadingly show "no fee" here even
+    though a category or platform default fee still applies once a referral
+    with them completes."""
+    if not partner_docs:
         return {}
-    rows = await settlement_rules.find({
+    partner_ids = [p["_id"] for p in partner_docs]
+    category_ids = list({p["category_id"] for p in partner_docs if p.get("category_id")})
+
+    partner_rules = await settlement_rules.find({
         "scope": "partner", "partner_id": {"$in": partner_ids},
         "is_active": True, "settlement_type": "flat_fee",
     }).to_list(None)
-    return {r["partner_id"]: r.get("flat_fee_amount") for r in rows}
+    partner_rate_by_id = {r["partner_id"]: r.get("flat_fee_amount") for r in partner_rules}
+
+    category_rate_by_cat_id = {}
+    if category_ids:
+        category_rules = await settlement_rules.find({
+            "scope": "category", "category_id": {"$in": category_ids},
+            "is_active": True, "settlement_type": "flat_fee",
+        }).to_list(None)
+        category_rate_by_cat_id = {r["category_id"]: r.get("flat_fee_amount") for r in category_rules}
+
+    platform_rule = await settlement_rules.find_one({"scope": "platform", "is_active": True, "settlement_type": "flat_fee"})
+    platform_default = platform_rule.get("flat_fee_amount") if platform_rule else None
+
+    result = {}
+    for p in partner_docs:
+        pid = p["_id"]
+        if pid in partner_rate_by_id:
+            result[pid] = partner_rate_by_id[pid]
+        elif p.get("category_id") in category_rate_by_cat_id:
+            result[pid] = category_rate_by_cat_id[p["category_id"]]
+        else:
+            result[pid] = platform_default
+    return result
 
 
 async def _enrich_partner(p: dict, referral_bonus_amount: float | None = None) -> dict:
@@ -78,7 +111,7 @@ async def list_partners(
         filt["is_available_now"] = True
 
     rows = await partners.find(filt).to_list(None)
-    rate_map = await _referral_bonus_amounts_for([p["_id"] for p in rows])
+    rate_map = await _referral_bonus_amounts_for(rows)
     enriched = [await _enrich_partner(p, rate_map.get(p["_id"])) for p in rows]
 
     if city:
@@ -112,7 +145,7 @@ async def recommendations(category: str, city: str | None = None):
         return {"generatedBy": "ai_heuristic_v1", "note": "", "recommendations": []}
 
     rows = await partners.find({"category_id": cat["_id"]}).to_list(None)
-    rate_map = await _referral_bonus_amounts_for([p["_id"] for p in rows])
+    rate_map = await _referral_bonus_amounts_for(rows)
     scored = []
     for p in rows:
         org = await organizations.find_one({"_id": p["org_id"]})
@@ -161,7 +194,7 @@ async def my_partner(current_user: dict = Depends(get_current_user)):
     p = await partners.find_one({"org_id": current_user["orgId"]})
     if not p:
         raise HTTPException(status_code=404, detail="Partner profile not found for this account.")
-    rate_map = await _referral_bonus_amounts_for([p["_id"]])
+    rate_map = await _referral_bonus_amounts_for([p])
     return {"partner": await _enrich_partner(p, rate_map.get(p["_id"]))}
 
 
@@ -179,7 +212,7 @@ async def get_partner(partner_id: str):
     out["phone"] = org.get("phone") if org else None
     out["email"] = org.get("email") if org else None
     out["logo_url"] = org.get("logo_url") if org else None
-    rate_map = await _referral_bonus_amounts_for([partner_id])
+    rate_map = await _referral_bonus_amounts_for([p])
     out["referral_bonus_amount"] = rate_map.get(partner_id)
     cat = await partner_categories.find_one({"_id": p.get("category_id")})
     out["category_name"] = cat.get("name") if cat else None

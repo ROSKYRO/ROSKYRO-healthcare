@@ -411,12 +411,22 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
         })
     if body.status == "completed":
         # Generate settlement if a rule applies (resolution order:
-        # org_partner_pair > partner > org > platform default 'none').
+        # org_partner_pair > partner > org > category > platform default
+        # 'none'). "category" sits between the business-specific "org"
+        # override and the platform-wide fallback: it's ROSKYRO's own
+        # category-level default (e.g. a lower default for Blood Test
+        # Labs, a higher one for MRI Centers -- set via
+        # /settlements/category-rates), used only when the partner hasn't
+        # self-set their own rate and no business-specific override
+        # exists. This exists because a single platform-wide flat fee
+        # doesn't account for wildly different service prices across
+        # categories (a blood test vs. an MRI scan).
         rule = None
         for scope_filt in (
             {"scope": "org_partner_pair", "org_id": referral["referring_org_id"], "partner_id": referral["partner_id"]},
             {"scope": "partner", "partner_id": referral["partner_id"]},
             {"scope": "org", "org_id": referral["referring_org_id"]},
+            {"scope": "category", "category_id": referral["category_id"]},
             {"scope": "platform"},
         ):
             rule = await settlement_rules.find_one({**scope_filt, "is_active": True})
