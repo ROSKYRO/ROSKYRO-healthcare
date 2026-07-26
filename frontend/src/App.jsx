@@ -49,6 +49,8 @@ import Organizations from './pages/internal/Organizations';
 import PartnerVerification from './pages/internal/PartnerVerification';
 import InternalSettlements from './pages/internal/Settlements';
 import MarketingPayouts from './pages/internal/MarketingPayouts';
+import SubscriptionRenewals from './pages/internal/SubscriptionRenewals';
+import AdminWallet from './pages/internal/AdminWallet';
 import Roster from './pages/internal/Roster';
 import PricingManagement from './pages/internal/PricingManagement';
 import PasswordRequests from './pages/internal/PasswordRequests';
@@ -113,6 +115,8 @@ export default function App() {
           <Route path="/team/partner-verification" element={<ProtectedRoute allow={['internal']}><PartnerVerification /></ProtectedRoute>} />
           <Route path="/team/settlements" element={<ProtectedRoute allow={['internal']}><InternalSettlements /></ProtectedRoute>} />
           <Route path="/team/marketing-payouts" element={<ProtectedRoute allow={['internal']}><MarketingPayouts /></ProtectedRoute>} />
+          <Route path="/team/subscription-renewals" element={<ProtectedRoute allow={['internal']}><SubscriptionRenewals /></ProtectedRoute>} />
+          <Route path="/team/wallet" element={<ProtectedRoute allow={['internal']}><AdminWallet /></ProtectedRoute>} />
           <Route path="/team/roster" element={<ProtectedRoute allow={['internal']}><Roster /></ProtectedRoute>} />
           <Route path="/team/pricing" element={<ProtectedRoute allow={['internal']}><PricingManagement /></ProtectedRoute>} />
           <Route path="/team/password-requests" element={<ProtectedRoute allow={['internal']}><PasswordRequests /></ProtectedRoute>} />
