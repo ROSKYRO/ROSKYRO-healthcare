@@ -8,6 +8,47 @@ import { Card, CardHeader, Table, Button, Input, Textarea, Badge, PageLoading, f
 // .toUpperCase() on the code would still read "CONNECT".
 const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing', complete: 'ROSKYRO Complete' };
 
+// One row per Networking Marketing partner category, grouped under its
+// group_name -- an inline ₹ input + Save button per row so ROSKYRO can set
+// a category-appropriate default Marketing Fee (e.g. lower for Blood Test
+// Labs, higher for MRI Centers) without touching every partner individually.
+function CategoryRateRow({ cat, onSave, busy }) {
+  const [value, setValue] = useState(cat.flat_fee_amount != null ? String(cat.flat_fee_amount) : '');
+  const [dirty, setDirty] = useState(false);
+
+  function handleChange(e) {
+    setValue(e.target.value);
+    setDirty(true);
+  }
+
+  async function handleSave() {
+    // onSave (saveCategoryRate) swallows its own errors so it can show a
+    // banner message instead of an uncaught rejection -- it returns
+    // true/false instead, so a failed PUT (validation error, network drop)
+    // leaves this row marked dirty rather than silently looking saved.
+    const ok = await onSave(cat.category_id, value === '' ? null : Number(value));
+    if (ok) setDirty(false);
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <p className="text-sm text-gray-700">{cat.category_name}</p>
+      <div className="flex items-center gap-2 shrink-0">
+        <input
+          className="text-sm border border-gray-300 rounded-lg px-3 py-2 w-28 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
+          type="number" min="0" step="1"
+          placeholder="none"
+          value={value}
+          onChange={handleChange}
+        />
+        <Button size="sm" variant="secondary" disabled={!dirty || busy} onClick={handleSave}>
+          {busy ? '…' : 'Save'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function PlanEditor({ plan, onSave, busy }) {
   const [form, setForm] = useState({
     name: plan.name,
@@ -78,21 +119,28 @@ export default function PricingManagement() {
   const [paymentForm, setPaymentForm] = useState({ upiId: '', paymentNote: '' });
   const [marketingRate, setMarketingRate] = useState(null);
   const [marketingRateForm, setMarketingRateForm] = useState('');
+  const [platformRateForm, setPlatformRateForm] = useState('');
+  const [categoryRates, setCategoryRates] = useState(null);
   const [busyCode, setBusyCode] = useState(null);
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [marketingRateBusy, setMarketingRateBusy] = useState(false);
+  const [platformRateBusy, setPlatformRateBusy] = useState(false);
+  const [busyCategoryId, setBusyCategoryId] = useState(null);
   const [message, setMessage] = useState('');
 
   const load = useCallback(() => {
     Promise.all([
       api.get('/plans'), api.get('/settings/payment'), api.get('/plans/subscriptions'), api.get('/settlements/marketing-fee-rate'),
-    ]).then(([p, s, sub, mr]) => {
+      api.get('/settlements/platform-rate'), api.get('/settlements/category-rates'),
+    ]).then(([p, s, sub, mr, pr, cr]) => {
       setPlans(p.data.plans);
       setPayment(s.data);
       setPaymentForm({ upiId: s.data.upi_id || '', paymentNote: s.data.payment_note || '' });
       setSubscriptions(sub.data.subscriptions);
       setMarketingRate(mr.data.percentage);
       setMarketingRateForm(String(mr.data.percentage));
+      setPlatformRateForm(pr.data.rate?.flat_fee_amount != null ? String(pr.data.rate.flat_fee_amount) : '');
+      setCategoryRates(cr.data.categoryRates);
     });
   }, []);
 
@@ -109,7 +157,7 @@ export default function PricingManagement() {
     );
   }
 
-  if (!plans || !payment || !subscriptions || marketingRate == null) return <PageLoading />;
+  if (!plans || !payment || !subscriptions || marketingRate == null || !categoryRates) return <PageLoading />;
 
   function renewalCell(sub) {
     if (sub.status !== 'active' || !sub.renewal_date) {
@@ -168,6 +216,37 @@ export default function PricingManagement() {
     }
   }
 
+  async function savePlatformRate(e) {
+    e.preventDefault();
+    setPlatformRateBusy(true);
+    setMessage('');
+    try {
+      await api.put('/settlements/platform-rate', { flatFeeAmount: platformRateForm === '' ? null : Number(platformRateForm) });
+      setMessage('Platform default Marketing Fee updated.');
+      load();
+    } catch (err) {
+      setMessage(err?.response?.data?.error || 'Could not save the platform default fee.');
+    } finally {
+      setPlatformRateBusy(false);
+    }
+  }
+
+  async function saveCategoryRate(categoryId, flatFeeAmount) {
+    setBusyCategoryId(categoryId);
+    setMessage('');
+    try {
+      await api.put(`/settlements/category-rates/${categoryId}`, { flatFeeAmount });
+      setMessage('Category default Marketing Fee updated.');
+      load();
+      return true;
+    } catch (err) {
+      setMessage(err?.response?.data?.error || 'Could not save this category\'s default fee.');
+      return false;
+    } finally {
+      setBusyCategoryId(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -210,6 +289,52 @@ export default function PricingManagement() {
           />
           <Button type="submit" disabled={marketingRateBusy}>{marketingRateBusy ? 'Saving…' : 'Save Payout Rate'}</Button>
         </form>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Marketing Fee — Platform Default"
+          subtitle="The fallback flat ₹ fee a partner pays ROSKYRO per completed referral when NOTHING more specific applies — no partner-specific rate, no business-specific override, and no category default below. Leave blank for 'none' (no fee)."
+        />
+        <form onSubmit={savePlatformRate} className="px-5 pb-5 space-y-4">
+          <Input
+            label="Platform default fee (₹)"
+            type="number" min="0" step="1"
+            placeholder="none"
+            value={platformRateForm}
+            onChange={(e) => setPlatformRateForm(e.target.value)}
+          />
+          <Button type="submit" disabled={platformRateBusy}>{platformRateBusy ? 'Saving…' : 'Save Platform Default'}</Button>
+        </form>
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Marketing Fee — Category Default Rates"
+          subtitle="Har test/service ki apni alag price hoti hai — ek hi flat fee sab categories pe lagana fair nahi hai (₹250 ka blood test aur ₹8,000 ka MRI same fee nahi de sakte). Yahan har category ke liye apna default flat ₹ fee set karo — ye tabhi lagega jab us partner ne khud apna rate set nahi kiya ho aur koi business-specific override na ho. Blank = platform default par fall back karega."
+        />
+        <div className="px-5 pb-5 space-y-5">
+          {Object.entries(
+            categoryRates.reduce((groups, cat) => {
+              (groups[cat.group_name] = groups[cat.group_name] || []).push(cat);
+              return groups;
+            }, {})
+          ).map(([groupName, cats]) => (
+            <div key={groupName}>
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">{groupName}</p>
+              <div className="divide-y divide-gray-100">
+                {cats.map((cat) => (
+                  <CategoryRateRow
+                    key={cat.category_id}
+                    cat={cat}
+                    onSave={saveCategoryRate}
+                    busy={busyCategoryId === cat.category_id}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </Card>
 
       <Card>
