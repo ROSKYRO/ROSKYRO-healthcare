@@ -87,3 +87,10 @@ password_reset_requests = db["password_reset_requests"]
 # with atomic single-document $inc counters for QR-booking slot capacity and
 # token sequencing. See app/routers/public_booking.py.
 booking_counters = db["booking_counters"]
+
+# Same one-document-per-sequence atomic $inc pattern as booking_counters
+# above, but for human-facing sequential IDs (referral codes, invoice
+# numbers) that used to be generated via `collection.count_documents({})` --
+# an O(collection size) full scan repeated on every single write. See
+# app/utils/counters.py.
+sequence_counters = db["sequence_counters"]
