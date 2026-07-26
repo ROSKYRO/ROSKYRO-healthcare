@@ -53,6 +53,10 @@ const NAV = {
     { to: '/team/settlements', label: 'Settlements', icon: '\u{1F4B0}' },
     { to: '/team/marketing-payouts', label: 'Marketing Fee Payouts', icon: '\u{1F4E4}' },
     { to: '/team/subscription-renewals', label: 'Subscription Renewals', icon: '\u{1F501}' },
+    // Shared across every business/computer -- see routers/whatsapp.py's
+    // /queue endpoints and app/utils/whatsapp_sender.py for why this is
+    // centralized here instead of each business sending its own.
+    { to: '/team/whatsapp-queue', label: 'WhatsApp Queue', icon: '\u{1F4F2}' },
     { to: '/team/roster', label: 'Team Roster', icon: '\u{1F465}' },
     // Super-admin only — the consolidated Earnings Wallet rolls up both
     // revenue streams (Marketing Fees + subscription renewals) and the

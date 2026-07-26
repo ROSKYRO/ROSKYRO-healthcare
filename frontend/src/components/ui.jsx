@@ -44,6 +44,7 @@ export function StatTile({ label, value, sub, icon, tone = 'brand' }) {
 const BADGE_TONES = {
   draft: 'bg-gray-100 text-gray-700',
   pending_review: 'bg-amber-100 text-amber-800',
+  queued: 'bg-amber-100 text-amber-800',
   sent: 'bg-blue-100 text-blue-800',
   accepted: 'bg-teal-100 text-teal-800',
   declined: 'bg-rose-100 text-rose-800',
