@@ -52,7 +52,7 @@ export default function PartnerDirectory() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Partner Directory</h1>
-          <p className="text-sm text-gray-500 mt-1">Trusted diagnostic labs, imaging centres, specialists and more — verified by ROSKYRO. Har partner apna Marketing Fee (flat ₹ amount jo wo har referral par ROSKYRO ko pay karta hai) khud set karta hai, jo yahan dikhta hai — jitna zyada collection hoga, utna hi zyada aapka Marketing Fee Payout share bhi banega.</p>
+          <p className="text-sm text-gray-500 mt-1">Trusted diagnostic labs, imaging centres, specialists and more — verified by ROSKYRO. Har partner ka apna flat ₹ Marketing Fee hota hai (jo wo har completed referral par ROSKYRO ko pay karta hai) — partner khud set kare ya na kare, category ke hisab se ek default fee yahan dikhta hai — jitna zyada collection hoga, utna hi zyada aapka Marketing Fee Payout share bhi banega.</p>
         </div>
         <Link to="/app/become-partner" className="shrink-0 text-sm font-medium text-brand-700 border border-brand-200 bg-brand-50 rounded-lg px-3 py-2 hover:bg-brand-100">
           List your business — it's free →
