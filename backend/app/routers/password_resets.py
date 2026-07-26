@@ -76,7 +76,11 @@ async def submit_request(body: SubmitBody):
 
 @router.get("")
 async def list_requests(current_user: dict = Depends(require_roles("roskyro_admin"))):
-    rows = await password_reset_requests.find().sort("requested_at", -1).to_list(None)
+    # Capped like every other platform-wide admin list -- this had no
+    # filter or limit at all, so it would return every reset request ever
+    # submitted (pending, resolved, and dismissed) across the platform's
+    # entire history.
+    rows = await password_reset_requests.find().sort("requested_at", -1).limit(300).to_list(None)
     return {"requests": to_out_many(rows)}
 
 

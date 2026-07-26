@@ -11,6 +11,7 @@ from app.utils.plans import require_plan
 from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
+from app.utils.counters import next_sequence
 
 router = APIRouter(
     prefix="/api/referrals",
@@ -43,8 +44,13 @@ TRANSITIONS = {
 
 
 async def next_referral_code() -> str:
-    n = await referrals.count_documents({})
-    return f"RSK-REF-{str(n + 1).zfill(6)}"
+    # Atomic $inc counter, not count_documents({}) -- see app/utils/counters.py.
+    # bootstrap=referrals.count_documents({}) makes the very first call after
+    # this migration continue exactly where the old count-based scheme left
+    # off, so no existing seeded/live referral code (e.g. RSK-REF-000001)
+    # ever gets re-minted.
+    n = await next_sequence("referral_code", bootstrap=lambda: referrals.count_documents({}))
+    return f"RSK-REF-{str(n).zfill(6)}"
 
 
 async def add_history(referral_id: str, status: str, changed_by: str | None, note: str | None):
@@ -128,14 +134,42 @@ async def _enrich_list(rows: list[dict]) -> list[dict]:
     """Manual joins standing in for referrals.js's SQL JOIN across
     organizations/partners/partner_categories/users -- fetch related docs
     by id and merge in application code (kept deliberately explicit rather
-    than a Mongo $lookup aggregation, for mongomock compatibility + clarity)."""
+    than a Mongo $lookup aggregation, for mongomock compatibility + clarity).
+
+    Batch-fetches each related collection ONCE via `$in`, instead of doing
+    5 separate find_one calls per row -- the previous version made this a
+    1 + 5*N query pattern for N referrals (e.g. 1501 queries to enrich a
+    300-row page), which gets slower purely from referral volume growing,
+    independent of how many businesses/partners exist. This does a fixed 4
+    queries total no matter how many rows are being enriched."""
+    if not rows:
+        return []
+
+    partner_ids = list({r["partner_id"] for r in rows if r.get("partner_id")})
+    category_ids = list({r["category_id"] for r in rows if r.get("category_id")})
+    user_ids = list({r["referring_user_id"] for r in rows if r.get("referring_user_id")})
+
+    partner_docs = await partners.find({"_id": {"$in": partner_ids}}).to_list(None) if partner_ids else []
+    partners_by_id = {p["_id"]: p for p in partner_docs}
+
+    org_ids = {r["referring_org_id"] for r in rows if r.get("referring_org_id")}
+    org_ids |= {p["org_id"] for p in partner_docs if p.get("org_id")}
+    org_docs = await organizations.find({"_id": {"$in": list(org_ids)}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
+    category_docs = await partner_categories.find({"_id": {"$in": category_ids}}).to_list(None) if category_ids else []
+    categories_by_id = {c["_id"]: c for c in category_docs}
+
+    user_docs = await users.find({"_id": {"$in": user_ids}}).to_list(None) if user_ids else []
+    users_by_id = {u["_id"]: u for u in user_docs}
+
     out = []
     for r in rows:
-        ro = await organizations.find_one({"_id": r["referring_org_id"]})
-        p = await partners.find_one({"_id": r["partner_id"]})
-        po = await organizations.find_one({"_id": p["org_id"]}) if p else None
-        pc = await partner_categories.find_one({"_id": r["category_id"]})
-        du = await users.find_one({"_id": r["referring_user_id"]})
+        ro = orgs_by_id.get(r.get("referring_org_id"))
+        p = partners_by_id.get(r.get("partner_id"))
+        po = orgs_by_id.get(p["org_id"]) if p else None
+        pc = categories_by_id.get(r.get("category_id"))
+        du = users_by_id.get(r.get("referring_user_id"))
         item = to_out(r)
         item["referring_org_name"] = ro.get("name") if ro else None
         item["partner_org_name"] = po.get("name") if po else None

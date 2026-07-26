@@ -9,28 +9,44 @@ from app.utils.phone import normalize_phone
 router = APIRouter(prefix="/api/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
 
 
-async def _pillars_and_monthly_total(org_id: str):
+async def _pillars_and_monthly_totals_bulk(org_ids: list[str]) -> dict:
     """Manual-join replacement for orgs.js's two LATERAL subqueries: each
     active subscription's pillars (bundle plans expand to all their
-    pillars) and a monthly-equivalent total (yearly plans divided by 12)."""
-    subs = await organization_subscriptions.find({"org_id": org_id, "status": "active"}).to_list(None)
-    active_pillars: set[str] = set()
-    monthly_total = 0.0
-    for sub in subs:
-        plan = await plans_collection.find_one({"_id": sub["plan_code"]})
-        if not plan:
-            continue
-        if plan.get("is_bundle") and plan.get("bundle_pillars"):
-            active_pillars.update(plan["bundle_pillars"])
-        else:
-            active_pillars.add(plan["_id"])
-        if sub.get("billing_cycle") == "yearly":
-            price = sub.get("price_at_purchase") or plan.get("yearly_price") or 0
-            monthly_total += float(price) / 12
-        else:
-            price = sub.get("price_at_purchase") or plan.get("monthly_price") or 0
-            monthly_total += float(price)
-    return list(active_pillars), monthly_total
+    pillars) and a monthly-equivalent total (yearly plans divided by 12) --
+    for every org_id given, in 2 queries total instead of a subscriptions
+    query PLUS a plan lookup per subscription PER org (which used to scale
+    directly with total business count, with no cap)."""
+    if not org_ids:
+        return {}
+    subs = await organization_subscriptions.find({"org_id": {"$in": org_ids}, "status": "active"}).to_list(None)
+    plan_codes = list({s["plan_code"] for s in subs if s.get("plan_code")})
+    plan_docs = await plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
+    subs_by_org: dict[str, list[dict]] = {}
+    for s in subs:
+        subs_by_org.setdefault(s["org_id"], []).append(s)
+
+    result = {}
+    for org_id in org_ids:
+        active_pillars: set[str] = set()
+        monthly_total = 0.0
+        for sub in subs_by_org.get(org_id, []):
+            plan = plans_by_code.get(sub["plan_code"])
+            if not plan:
+                continue
+            if plan.get("is_bundle") and plan.get("bundle_pillars"):
+                active_pillars.update(plan["bundle_pillars"])
+            else:
+                active_pillars.add(plan["_id"])
+            if sub.get("billing_cycle") == "yearly":
+                price = sub.get("price_at_purchase") or plan.get("yearly_price") or 0
+                monthly_total += float(price) / 12
+            else:
+                price = sub.get("price_at_purchase") or plan.get("monthly_price") or 0
+                monthly_total += float(price)
+        result[org_id] = (list(active_pillars), monthly_total)
+    return result
 
 
 @router.get("", dependencies=[Depends(require_internal)])
@@ -43,9 +59,10 @@ async def list_orgs(status: str | None = None, q: str | None = None):
         filt["name"] = {"$regex": q, "$options": "i"}
     rows = await organizations.find(filt).sort("created_at", -1).limit(300).to_list(None)
 
+    totals_by_org = await _pillars_and_monthly_totals_bulk([o["_id"] for o in rows])
     out = []
     for o in rows:
-        pillars, monthly_total = await _pillars_and_monthly_total(o["_id"])
+        pillars, monthly_total = totals_by_org.get(o["_id"], ([], 0.0))
         item = to_out(o)
         item["active_pillars"] = pillars
         item["monthly_total"] = monthly_total

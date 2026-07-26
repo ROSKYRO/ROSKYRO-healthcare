@@ -72,18 +72,44 @@ async def _referral_bonus_amounts_for(partner_docs: list[dict]) -> dict:
     return result
 
 
-async def _enrich_partner(p: dict, referral_bonus_amount: float | None = None) -> dict:
-    org = await organizations.find_one({"_id": p["org_id"]})
-    cat = await partner_categories.find_one({"_id": p.get("category_id")})
-    out = to_out(p)
-    out["org_name"] = org.get("name") if org else None
-    out["city"] = org.get("city") if org else None
-    out["state"] = org.get("state") if org else None
-    out["logo_url"] = org.get("logo_url") if org else None
-    out["category_name"] = cat.get("name") if cat else None
-    out["category_slug"] = cat.get("slug") if cat else None
-    out["referral_bonus_amount"] = referral_bonus_amount
+async def _enrich_partners(rows: list[dict], rate_map: dict) -> list[dict]:
+    """Batch-fetch each partner's org + category ONCE via $in instead of 2
+    find_one calls per partner -- the previous per-row version made the
+    partner directory a 1 + 2*N query pattern for N partners, which gets
+    slower purely as the number of registered partners grows. This runs a
+    fixed 2 extra queries total regardless of row count."""
+    if not rows:
+        return []
+    org_ids = list({p["org_id"] for p in rows if p.get("org_id")})
+    category_ids = list({p["category_id"] for p in rows if p.get("category_id")})
+
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
+    category_docs = await partner_categories.find({"_id": {"$in": category_ids}}).to_list(None) if category_ids else []
+    categories_by_id = {c["_id"]: c for c in category_docs}
+
+    out = []
+    for p in rows:
+        org = orgs_by_id.get(p.get("org_id"))
+        cat = categories_by_id.get(p.get("category_id"))
+        item = to_out(p)
+        item["org_name"] = org.get("name") if org else None
+        item["city"] = org.get("city") if org else None
+        item["state"] = org.get("state") if org else None
+        item["logo_url"] = org.get("logo_url") if org else None
+        item["category_name"] = cat.get("name") if cat else None
+        item["category_slug"] = cat.get("slug") if cat else None
+        item["referral_bonus_amount"] = rate_map.get(p["_id"])
+        out.append(item)
     return out
+
+
+async def _enrich_partner(p: dict, referral_bonus_amount: float | None = None) -> dict:
+    """Single-partner convenience wrapper around _enrich_partners, for call
+    sites enriching exactly one partner (e.g. GET /partners/me)."""
+    enriched = await _enrich_partners([p], {p["_id"]: referral_bonus_amount})
+    return enriched[0]
 
 
 @router.get("/categories")
@@ -112,7 +138,7 @@ async def list_partners(
 
     rows = await partners.find(filt).to_list(None)
     rate_map = await _referral_bonus_amounts_for(rows)
-    enriched = [await _enrich_partner(p, rate_map.get(p["_id"])) for p in rows]
+    enriched = await _enrich_partners(rows, rate_map)
 
     if city:
         needle = city.lower()
@@ -146,9 +172,17 @@ async def recommendations(category: str, city: str | None = None):
 
     rows = await partners.find({"category_id": cat["_id"]}).to_list(None)
     rate_map = await _referral_bonus_amounts_for(rows)
+
+    # Batch-fetch every candidate's org ONCE via $in instead of 1 find_one
+    # per partner in this category -- was 1 + N queries, growing directly
+    # with how many partners are registered in the category.
+    org_ids = list({p["org_id"] for p in rows if p.get("org_id")})
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
     scored = []
     for p in rows:
-        org = await organizations.find_one({"_id": p["org_id"]})
+        org = orgs_by_id.get(p.get("org_id"))
         if city:
             needle = city.lower()
             org_city = (org.get("city") or "").lower() if org else ""

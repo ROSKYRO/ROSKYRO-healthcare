@@ -76,10 +76,21 @@ async def list_tasks(
     rows.sort(key=sort_key)
     rows = rows[:300]
 
+    # Batch-fetch org + assigned-user ONCE each via $in, instead of 2
+    # find_one calls per task row -- this used to be a 1 + 2*N query pattern
+    # (e.g. 601 queries to render a 300-row page); now it's a fixed 3 queries
+    # total no matter how many rows are being enriched.
+    org_ids = list({t["org_id"] for t in rows if t.get("org_id")})
+    user_ids = list({t["assigned_to"] for t in rows if t.get("assigned_to")})
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+    user_docs = await users.find({"_id": {"$in": user_ids}}).to_list(None) if user_ids else []
+    users_by_id = {u["_id"]: u for u in user_docs}
+
     out = []
     for t in rows:
-        org = await organizations.find_one({"_id": t["org_id"]}) if t.get("org_id") else None
-        au = await users.find_one({"_id": t["assigned_to"]}) if t.get("assigned_to") else None
+        org = orgs_by_id.get(t.get("org_id"))
+        au = users_by_id.get(t.get("assigned_to"))
         item = to_out(t)
         item["org_name"] = org.get("name") if org else None
         item["assigned_to_name"] = au.get("name") if au else None

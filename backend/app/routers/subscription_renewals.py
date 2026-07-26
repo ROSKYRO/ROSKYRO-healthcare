@@ -27,6 +27,7 @@ from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, as_aware, to_out, to_out_many
 from app.utils.invoices import render_subscription_renewal_invoice_pdf
+from app.utils.counters import next_sequence
 
 router = APIRouter(prefix="/api/subscription-renewals", tags=["subscription-renewals"], dependencies=[Depends(get_current_user)])
 
@@ -48,8 +49,13 @@ def _is_renewal_period_due(started_at, billing_cycle: str, period: str) -> bool:
 
 
 async def _next_invoice_number() -> str:
-    n = await subscription_renewals.count_documents({})
-    return f"SUB-INV-{str(n + 1).zfill(6)}"
+    # Atomic $inc counter, not count_documents({}) -- see app/utils/counters.py.
+    # This matters especially here: /generate loops over every active
+    # subscription and used to call the old count-based version once per
+    # subscription, making a full-collection scan repeat N times in a single
+    # admin bulk action instead of running it (at most) once, ever.
+    n = await next_sequence("subscription_renewal_invoice_number", bootstrap=lambda: subscription_renewals.count_documents({}))
+    return f"SUB-INV-{str(n).zfill(6)}"
 
 
 class GenerateBody(BaseModel):
@@ -118,7 +124,7 @@ async def list_renewal_charges(period: str | None = None, orgId: str | None = No
         filt["org_id"] = orgId
     if period:
         filt["period"] = period
-    rows = await subscription_renewals.find(filt).sort("created_at", -1).to_list(None)
+    rows = await subscription_renewals.find(filt).sort("created_at", -1).limit(300).to_list(None)
     return {"renewals": to_out_many(rows)}
 
 

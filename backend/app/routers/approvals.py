@@ -22,10 +22,21 @@ async def list_approvals(status: str | None = None, orgId: str | None = None, cu
         filt["status"] = status
 
     rows = await approvals.find(filt).sort("created_at", -1).limit(200).to_list(None)
+
+    # Batch-fetch org + preparer ONCE each via $in, instead of 2 find_one
+    # calls per approval row -- same fix as tasks.py/list_tasks: a fixed 3
+    # queries total regardless of row count, instead of 1 + 2*N.
+    org_ids = list({a["org_id"] for a in rows if a.get("org_id")})
+    user_ids = list({a["prepared_by"] for a in rows if a.get("prepared_by")})
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+    user_docs = await users.find({"_id": {"$in": user_ids}}).to_list(None) if user_ids else []
+    users_by_id = {u["_id"]: u for u in user_docs}
+
     out = []
     for a in rows:
-        org = await organizations.find_one({"_id": a["org_id"]})
-        pu = await users.find_one({"_id": a.get("prepared_by")}) if a.get("prepared_by") else None
+        org = orgs_by_id.get(a.get("org_id"))
+        pu = users_by_id.get(a.get("prepared_by"))
         item = to_out(a)
         item["org_name"] = org.get("name") if org else None
         item["prepared_by_name"] = pu.get("name") if pu else None

@@ -9,6 +9,7 @@ from app.utils.roles import is_internal
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.invoices import render_marketing_payout_invoice_pdf
+from app.utils.counters import next_sequence
 
 router = APIRouter(prefix="/api/settlements", tags=["settlements"], dependencies=[Depends(get_current_user)])
 
@@ -27,7 +28,7 @@ async def list_rules(current_user: dict = Depends(get_current_user)):
     if current_user["appShell"] == "partner":
         p = await partners.find_one({"org_id": current_user["orgId"]})
         filt["partner_id"] = p["_id"] if p else "__none__"
-    rows = await settlement_rules.find(filt).sort("created_at", -1).to_list(None)
+    rows = await settlement_rules.find(filt).sort("created_at", -1).limit(300).to_list(None)
     return {"rules": to_out_many(rows)}
 
 
@@ -269,12 +270,30 @@ async def list_settlements(status: str | None = None, period: str | None = None,
     roskyro_upi_id = platform.get("upi_id") if platform else None
 
     rows = await settlements.find(filt).sort("created_at", -1).limit(300).to_list(None)
+
+    # Batch-fetch every related referral/org/partner ONCE via $in instead of
+    # 4 find_one calls per settlement row (was 1 + 4*N queries for N rows --
+    # gets slower purely as settlement volume grows, not partner/business
+    # count). Fixed 4 extra queries total regardless of how many rows.
+    referral_ids = list({s["referral_id"] for s in rows if s.get("referral_id")})
+    referral_docs = await referrals.find({"_id": {"$in": referral_ids}}).to_list(None) if referral_ids else []
+    referrals_by_id = {r["_id"]: r for r in referral_docs}
+
+    partner_ids = list({s["partner_id"] for s in rows if s.get("partner_id")})
+    partner_docs = await partners.find({"_id": {"$in": partner_ids}}).to_list(None) if partner_ids else []
+    partners_by_id = {p["_id"]: p for p in partner_docs}
+
+    org_ids = {s["org_id"] for s in rows if s.get("org_id")}
+    org_ids |= {p["org_id"] for p in partner_docs if p.get("org_id")}
+    org_docs = await organizations.find({"_id": {"$in": list(org_ids)}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
     out = []
     for s in rows:
-        r = await referrals.find_one({"_id": s["referral_id"]})
-        ro = await organizations.find_one({"_id": s["org_id"]})
-        p = await partners.find_one({"_id": s["partner_id"]})
-        po = await organizations.find_one({"_id": p["org_id"]}) if p else None
+        r = referrals_by_id.get(s.get("referral_id"))
+        ro = orgs_by_id.get(s.get("org_id"))
+        p = partners_by_id.get(s.get("partner_id"))
+        po = orgs_by_id.get(p["org_id"]) if p else None
         item = to_out(s)
         item["referral_code"] = r.get("referral_code") if r else None
         item["org_name"] = ro.get("name") if ro else None
@@ -417,28 +436,56 @@ async def set_marketing_fee_rate(body: MarketingFeeRateBody, current_user: dict 
     return {"percentage": body.percentage}
 
 
-async def _marketing_report_row(org: dict, period: str, rate: float) -> dict:
+async def _marketing_report_rows(org_ids: list[str], period: str, rate: float) -> list[dict]:
     """Every Marketing Fee collected from a partner (status: paid) whose
-    referral was attributed to this referring business, for the given
-    period, that hasn't already been folded into a finalized payout."""
-    matching = await settlements.find({
-        "org_id": org["_id"], "period_month": period, "status": "paid", "included_in_payout_id": None,
+    referral was attributed to each of these referring businesses, for the
+    given period, that hasn't already been folded into a finalized payout --
+    one row per org_id.
+
+    Batch-fetches orgs, matching settlements, and existing payouts ONCE each
+    via $in-scoped queries, instead of doing 1 org lookup + 1 settlements
+    scan + 1 payout lookup PER business (3*N queries that grow directly
+    with how many businesses have activity this period, with no cap). This
+    runs a fixed 3 queries total regardless of how many org_ids are passed
+    in."""
+    if not org_ids:
+        return []
+
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None)
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
+    matching_docs = await settlements.find({
+        "org_id": {"$in": org_ids}, "period_month": period, "status": "paid", "included_in_payout_id": None,
     }).to_list(None)
-    total_collected = round(sum(float(s.get("amount") or 0) for s in matching), 2)
-    payout_amount = round(total_collected * rate / 100, 2)
-    existing_payout = await marketing_payouts.find_one({"org_id": org["_id"], "period": period})
-    return {
-        "org_id": org["_id"],
-        "org_name": org.get("name"),
-        "business_type": org.get("business_type"),
-        "referral_count": len(matching),
-        "total_fees_collected": total_collected,
-        "payout_percentage": rate,
-        "payout_amount": payout_amount,
-        "payout_account_upi_id": org.get("marketing_payout_upi_id"),
-        "payout_status": existing_payout.get("status") if existing_payout else ("not_generated" if total_collected > 0 else "nothing_collected"),
-        "payout_id": existing_payout.get("_id") if existing_payout else None,
-    }
+    matching_by_org: dict[str, list[dict]] = {}
+    for s in matching_docs:
+        matching_by_org.setdefault(s["org_id"], []).append(s)
+
+    payout_docs = await marketing_payouts.find({"org_id": {"$in": org_ids}, "period": period}).to_list(None)
+    payout_by_org = {p["org_id"]: p for p in payout_docs}
+
+    rows = []
+    for org_id in org_ids:
+        org = orgs_by_id.get(org_id)
+        if not org:
+            continue
+        matching = matching_by_org.get(org_id, [])
+        total_collected = round(sum(float(s.get("amount") or 0) for s in matching), 2)
+        payout_amount = round(total_collected * rate / 100, 2)
+        existing_payout = payout_by_org.get(org_id)
+        rows.append({
+            "org_id": org_id,
+            "org_name": org.get("name"),
+            "business_type": org.get("business_type"),
+            "referral_count": len(matching),
+            "total_fees_collected": total_collected,
+            "payout_percentage": rate,
+            "payout_amount": payout_amount,
+            "payout_account_upi_id": org.get("marketing_payout_upi_id"),
+            "payout_status": existing_payout.get("status") if existing_payout else ("not_generated" if total_collected > 0 else "nothing_collected"),
+            "payout_id": existing_payout.get("_id") if existing_payout else None,
+        })
+    return rows
 
 
 @router.get("/marketing-report", dependencies=[Depends(require_internal)])
@@ -451,12 +498,7 @@ async def marketing_report(period: str = Query(..., description="YYYY-MM")):
     it should be sent to."""
     rate = await _marketing_fee_payout_percentage()
     org_ids = await settlements.distinct("org_id", {"period_month": period})
-    rows = []
-    for org_id in org_ids:
-        org = await organizations.find_one({"_id": org_id})
-        if not org:
-            continue
-        rows.append(await _marketing_report_row(org, period, rate))
+    rows = await _marketing_report_rows(org_ids, period, rate)
     rows.sort(key=lambda r: -r["total_fees_collected"])
     return {"period": period, "payout_percentage": rate, "businesses": rows}
 
@@ -467,8 +509,9 @@ class CreatePayoutBody(BaseModel):
 
 
 async def _next_invoice_number() -> str:
-    n = await marketing_payouts.count_documents({})
-    return f"MKT-INV-{str(n + 1).zfill(6)}"
+    # Atomic $inc counter, not count_documents({}) -- see app/utils/counters.py.
+    n = await next_sequence("marketing_payout_invoice_number", bootstrap=lambda: marketing_payouts.count_documents({}))
+    return f"MKT-INV-{str(n).zfill(6)}"
 
 
 @router.post("/marketing-payouts", status_code=201, dependencies=[Depends(require_internal)])
@@ -523,7 +566,7 @@ async def list_marketing_payouts(orgId: str | None = None, period: str | None = 
         filt["org_id"] = orgId
     if period:
         filt["period"] = period
-    rows = await marketing_payouts.find(filt).sort("created_at", -1).to_list(None)
+    rows = await marketing_payouts.find(filt).sort("created_at", -1).limit(300).to_list(None)
     return {"payouts": to_out_many(rows)}
 
 
@@ -585,7 +628,7 @@ async def admin_wallet_summary(period: str = Query(..., description="YYYY-MM")):
     One stream flows OUT of ROSKYRO:
       - The Marketing Fee Payout ROSKYRO owes back to referring businesses --
         a fixed % of the Marketing Fees collected because of their referrals
-        this period (same _marketing_report_row computation the existing
+        this period (same _marketing_report_rows computation the existing
         internal Marketing Payouts page already uses).
 
     Each inflow is broken into collected (paid + confirmed) / awaiting the
@@ -631,15 +674,10 @@ async def admin_wallet_summary(period: str = Query(..., description="YYYY-MM")):
     # --- Marketing Fee Payouts ROSKYRO owes OUT to referring businesses, business-wise ---
     rate = await _marketing_fee_payout_percentage()
     org_ids = await settlements.distinct("org_id", {"period_month": period})
-    businesses = []
-    for org_id in org_ids:
-        org = await organizations.find_one({"_id": org_id})
-        if not org:
-            continue
-        businesses.append(await _marketing_report_row(org, period, rate))
+    businesses = await _marketing_report_rows(org_ids, period, rate)
     businesses.sort(key=lambda r: -r["total_fees_collected"])
 
-    # _marketing_report_row's total_fees_collected/payout_amount are a LIVE
+    # _marketing_report_rows's total_fees_collected/payout_amount are a LIVE
     # sum over settlements not yet tagged into any payout
     # (included_in_payout_id: None) -- correct for "what would a new payout
     # generate right now", but once a business's payout for this period IS
@@ -718,5 +756,5 @@ async def list_statements(partyType: str | None = None, partyId: str | None = No
         filt["party_id"] = partyId
     if period:
         filt["period_month"] = period
-    rows = await statements.find(filt).sort("period_month", -1).to_list(None)
+    rows = await statements.find(filt).sort("period_month", -1).limit(300).to_list(None)
     return {"statements": to_out_many(rows)}

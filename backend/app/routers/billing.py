@@ -4,6 +4,7 @@ from app.db import invoices
 from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.ids import new_id, now, to_out, to_out_many
+from app.utils.counters import next_sequence
 
 router = APIRouter(
     prefix="/api/billing", tags=["billing"],
@@ -12,8 +13,9 @@ router = APIRouter(
 
 
 async def next_invoice_number() -> str:
-    n = await invoices.count_documents({})
-    return f"INV-{str(n + 1).zfill(6)}"
+    # Atomic $inc counter, not count_documents({}) -- see app/utils/counters.py.
+    n = await next_sequence("billing_invoice_number", bootstrap=lambda: invoices.count_documents({}))
+    return f"INV-{str(n).zfill(6)}"
 
 
 def compute_totals(line_items: list, discount: float = 0, tax_rate: float = 0) -> dict:

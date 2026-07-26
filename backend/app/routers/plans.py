@@ -67,11 +67,27 @@ async def all_subscriptions():
     platform, with a computed next-renewal date per active row, for
     billing follow-up. Cancelled subscriptions show no renewal date since
     nothing is due."""
-    rows = await organization_subscriptions.find({}).to_list(None)
+    # Capped like every other platform-wide admin list (see orgs.py's
+    # list_orgs, settlements.py's list_settlements) -- this endpoint has no
+    # org/status filter at all, so without a limit it would return every
+    # subscription ever created, across every business, forever.
+    rows = await organization_subscriptions.find({}).sort("started_at", -1).limit(300).to_list(None)
+
+    # Batch-fetch org + plan ONCE each via $in, instead of 2 find_one calls
+    # per subscription row -- same fix as referrals.py/settlements.py/
+    # partners.py/orgs.py/tasks.py/approvals.py: a fixed 2 queries total
+    # instead of 1 + 2*N.
+    org_ids = list({r["org_id"] for r in rows if r.get("org_id")})
+    plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+    plan_docs = await plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
     subs = []
     for r in rows:
-        org = await organizations.find_one({"_id": r["org_id"]})
-        plan = await plans_collection.find_one({"_id": r["plan_code"]})
+        org = orgs_by_id.get(r.get("org_id"))
+        plan = plans_by_code.get(r.get("plan_code"))
         item = to_out(r)
         item["org_name"] = org.get("name") if org else None
         item["plan_name"] = plan.get("name") if plan else None
