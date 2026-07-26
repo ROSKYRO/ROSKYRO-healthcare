@@ -6,12 +6,21 @@ import { Card, Table, Badge, Button, PageLoading, Select, formatDate } from '../
 export default function ReferralsList({ title, subtitle, basePath, newPath, showCreate = false }) {
   const [referrals, setReferrals] = useState(null);
   const [status, setStatus] = useState('');
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
-    api.get('/referrals', { params: status ? { status } : {} }).then((res) => setReferrals(res.data.referrals));
+    setError('');
+    // Previously no .catch -- this list is shared by all three shells
+    // (customer/partner/internal referral pages), so a failure here left
+    // every one of them stuck on a permanent spinner.
+    api.get('/referrals', { params: status ? { status } : {} }).then((res) => setReferrals(res.data.referrals)).catch((err) => {
+      setError(err?.response?.data?.error || 'Could not load referrals. Please try again.');
+      setReferrals([]);
+    });
   }, [status]);
 
+  if (error) return <p className="text-sm text-rose-600">{error}</p>;
   if (!referrals) return <PageLoading />;
 
   return (

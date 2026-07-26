@@ -50,8 +50,16 @@ export default function ReferralDetail({ basePath }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
+  const [loadError, setLoadError] = useState('');
+
   const load = useCallback(() => {
-    api.get(`/referrals/${id}`).then((res) => setDetail(res.data));
+    setLoadError('');
+    // Previously no .catch -- this detail page is shared by all three
+    // shells, so any failure (404 for a bad id, 403, network error) left
+    // it stuck on a permanent spinner instead of showing what went wrong.
+    api.get(`/referrals/${id}`).then((res) => setDetail(res.data)).catch((err) => {
+      setLoadError(err?.response?.data?.error || 'Could not load this referral.');
+    });
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -74,6 +82,7 @@ export default function ReferralDetail({ basePath }) {
     }
   }
 
+  if (loadError) return <p className="text-sm text-rose-600">{loadError}</p>;
   if (!detail) return <PageLoading />;
   const { referral, history, followups, patient_notifications: patientNotifications = [] } = detail;
   const actions = availableActions(referral, user);
