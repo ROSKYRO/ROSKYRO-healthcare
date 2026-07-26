@@ -20,7 +20,6 @@ partners = db["partners"]
 partner_services = db["partner_services"]
 referrals = db["referrals"]
 referral_status_history = db["referral_status_history"]
-referral_documents = db["referral_documents"]
 referral_followups = db["referral_followups"]
 settlement_rules = db["settlement_rules"]
 settlements = db["settlements"]
@@ -43,6 +42,17 @@ reports = db["reports"]
 audit_logs = db["audit_logs"]
 plans = db["plans"]
 organization_subscriptions = db["organization_subscriptions"]
+# Per-period renewal charges for an active subscription -- the SAME
+# pending -> business self-reports paid -> ROSKYRO confirms received ->
+# invoice lifecycle the Marketing Fee side already uses (settlements ->
+# marketing_payouts), but for money flowing the OTHER direction: a business
+# owes ROSKYRO for its own GROW/MANAGE/Networking Marketing/Complete
+# subscription, not a partner owing a referral fee. Deliberately excludes
+# the very first billing period (that one is still the existing instant
+# "I've Paid — Activate" checkout in plans.py's /subscribe) -- this
+# collection only covers genuine RENEWALS from the second period onward.
+# See app/routers/subscription_renewals.py.
+subscription_renewals = db["subscription_renewals"]
 platform_settings = db["platform_settings"]
 booking_settings = db["booking_settings"]
 patients = db["patients"]
