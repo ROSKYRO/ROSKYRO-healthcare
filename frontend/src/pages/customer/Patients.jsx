@@ -10,22 +10,36 @@ export default function Patients() {
   const [q, setQ] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', email: '', age: '', gender: '', notes: '' });
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
   const load = useCallback(() => {
     api.get('/patients', { params: q ? { q } : {} })
       .then((res) => setPatients(res.data.patients))
-      .catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+      .catch((err) => {
+        if (err?.response?.status === 402) setBlocked(true);
+        else { setError('Could not load patients. Please try again.'); setPatients([]); }
+      });
   }, [q]);
 
-  useEffect(load, [load]);
+  // Debounced -- without this, every keystroke in the search box fired its
+  // own GET /patients request.
+  useEffect(() => {
+    const t = setTimeout(load, 300);
+    return () => clearTimeout(t);
+  }, [load]);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    await api.post('/patients', { ...form, age: form.age ? Number(form.age) : undefined });
-    setShowForm(false);
-    setForm({ name: '', phone: '', email: '', age: '', gender: '', notes: '' });
-    load();
+    setError('');
+    try {
+      await api.post('/patients', { ...form, age: form.age ? Number(form.age) : undefined });
+      setShowForm(false);
+      setForm({ name: '', phone: '', email: '', age: '', gender: '', notes: '' });
+      load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not add patient. Please try again.');
+    }
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
@@ -49,12 +63,14 @@ export default function Patients() {
             <Input label="Email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
             <Input label="Age" type="number" value={form.age} onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))} />
             <Textarea label="Notes" rows={2} className="col-span-2" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+            {error && <p className="text-sm text-rose-600 col-span-2">{error}</p>}
             <div className="col-span-2"><Button type="submit">Save Patient</Button></div>
           </form>
         </Card>
       )}
 
       <Input placeholder="Search by name or phone…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-xs" />
+      {error && !showForm && <p className="text-sm text-rose-600">{error}</p>}
 
       <Card>
         <Table

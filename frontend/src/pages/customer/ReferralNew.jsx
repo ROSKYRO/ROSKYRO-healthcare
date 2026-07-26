@@ -35,6 +35,8 @@ export default function ReferralNew() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [searchedOnce, setSearchedOnce] = useState(false);
+  const [searchLocked, setSearchLocked] = useState(false);
+  const [searchError, setSearchError] = useState('');
   const debounceRef = useRef(null);
 
   const [referringPartnerId, setReferringPartnerId] = useState(null);
@@ -46,10 +48,25 @@ export default function ReferralNew() {
     const keyword = serviceKeyword.trim();
     if (!keyword) { setSearchResults([]); setSearchedOnce(false); return; }
     setSearching(true);
+    setSearchLocked(false);
+    setSearchError('');
     debounceRef.current = setTimeout(async () => {
       try {
         const res = await api.get('/partners/search-by-service', { params: { keyword } });
         setSearchResults(res.data.partners);
+      } catch (err) {
+        // Previously uncaught: this endpoint 402s when the org's
+        // Networking Marketing plan isn't active, and any error silently
+        // rendered "no partners found" -- misleading the user into
+        // thinking the search just came up empty rather than that the
+        // plan needs activating (or the request failed for another
+        // reason).
+        setSearchResults([]);
+        if (err?.response?.status === 402) {
+          setSearchLocked(true);
+        } else {
+          setSearchError(err?.response?.data?.error || 'Could not search partners. Please try again.');
+        }
       } finally {
         setSearching(false);
         setSearchedOnce(true);
@@ -204,7 +221,18 @@ export default function ReferralNew() {
 
           {searching && <p className="text-xs text-gray-400 mt-2">Searching…</p>}
 
-          {!searching && searchedOnce && searchResults.length === 0 && (
+          {!searching && searchLocked && (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-sm font-medium text-amber-800">Networking Marketing plan required to search partners.</p>
+              <Link to="/app/plans" className="text-sm text-brand-700 font-medium underline">Activate it from Plans & Billing →</Link>
+            </div>
+          )}
+
+          {!searching && searchError && (
+            <p className="text-xs text-rose-600 mt-2">{searchError}</p>
+          )}
+
+          {!searching && !searchLocked && !searchError && searchedOnce && searchResults.length === 0 && (
             <p className="text-xs text-gray-400 mt-2">Koi partner nahi mila is keyword ke liye — thoda alag keyword try karo (jaise poori category ka naam).</p>
           )}
 

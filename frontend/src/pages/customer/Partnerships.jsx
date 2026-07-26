@@ -26,10 +26,21 @@ export default function Partnerships() {
 
   const [busyKey, setBusyKey] = useState(null);
   const [error, setError] = useState('');
+  const [pickerError, setPickerError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/partners/categories').then((res) => setCategories(res.data.categories));
-    api.get('/partnerships').then((res) => setPartnerships(res.data.partnerships));
+    // Previously uncaught: any failure here left categories/partnerships
+    // at null forever, and the page's loading gate (`!categories ||
+    // !partnerships || ...`) meant the WHOLE page got stuck on a spinner
+    // with no way out.
+    api.get('/partners/categories').then((res) => setCategories(res.data.categories)).catch(() => {
+      setError('Could not load categories. Please refresh the page.');
+      setCategories([]);
+    });
+    api.get('/partnerships').then((res) => setPartnerships(res.data.partnerships)).catch(() => {
+      setError('Could not load your partnerships. Please refresh the page.');
+      setPartnerships([]);
+    });
     if (isOwner) {
       api.get('/partnerships/requests').then((res) => setRequests(res.data.requests)).catch(() => setRequests([]));
     } else {
@@ -42,9 +53,21 @@ export default function Partnerships() {
   useEffect(() => {
     if (!pickerCategory) return;
     setPickerResults(null);
+    setPickerError('');
     const t = setTimeout(() => {
       api.get('/partners', { params: { category: pickerCategory.slug, q: pickerQ || undefined } })
-        .then((res) => setPickerResults(res.data.partners));
+        .then((res) => setPickerResults(res.data.partners))
+        .catch((err) => {
+          // Previously uncaught -- any failure (402 if the connect plan
+          // isn't active, network error, etc) left the picker stuck on a
+          // permanent spinner with no feedback.
+          setPickerResults([]);
+          setPickerError(
+            err?.response?.status === 402
+              ? 'Networking Marketing plan required to browse partners.'
+              : (err?.response?.data?.error || 'Could not load partners. Please try again.')
+          );
+        });
     }, 300);
     return () => clearTimeout(t);
   }, [pickerCategory, pickerQ]);
@@ -206,10 +229,11 @@ export default function Partnerships() {
             </button>
           </div>
           <Input placeholder="Search by name…" value={pickerQ} onChange={(e) => setPickerQ(e.target.value)} />
+          {pickerError && <p className="text-sm text-rose-600">{pickerError}</p>}
           {!pickerResults ? (
-            <PageLoading />
+            pickerError ? null : <PageLoading />
           ) : pickerResults.length === 0 ? (
-            <EmptyState title="No partners found in this category." />
+            !pickerError && <EmptyState title="No partners found in this category." />
           ) : (
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {pickerResults.map((p) => (

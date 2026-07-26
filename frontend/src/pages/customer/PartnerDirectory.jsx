@@ -13,24 +13,38 @@ export default function PartnerDirectory() {
   const [sortBy, setSortBy] = useState('default');
   const [partners, setPartners] = useState(null);
   const [locked, setLocked] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     api.get('/partners/categories').then((res) => setCategories(res.data.categories)).catch(() => {});
   }, []);
 
+  // Debounced -- without this, every keystroke in the search box fired its
+  // own GET /partners request (racing with the previous one), hammering
+  // the backend and making the list flicker/jump on fast typing.
   useEffect(() => {
     setLocked(false);
-    api.get('/partners', { params: { category: category || undefined, q: q || undefined } })
-      .then((res) => setPartners(res.data.partners))
-      .catch((err) => {
-        // Browsing the full directory needs the Networking Marketing plan (unlike free
-        // self-registration via "Become a Partner") — show an upgrade
-        // prompt instead of letting the request crash the page.
-        if (err?.response?.status === 402) {
-          setLocked(true);
-          setPartners([]);
-        }
-      });
+    setError('');
+    const t = setTimeout(() => {
+      api.get('/partners', { params: { category: category || undefined, q: q || undefined } })
+        .then((res) => setPartners(res.data.partners))
+        .catch((err) => {
+          // Browsing the full directory needs the Networking Marketing plan (unlike free
+          // self-registration via "Become a Partner") — show an upgrade
+          // prompt instead of letting the request crash the page.
+          if (err?.response?.status === 402) {
+            setLocked(true);
+            setPartners([]);
+          } else {
+            // Any other failure (network blip, 5xx) previously left
+            // `partners` at null forever -> a permanent loading spinner
+            // with no way out. Show a retryable error instead.
+            setError(err?.response?.data?.error || 'Could not load partners. Please try again.');
+            setPartners([]);
+          }
+        });
+    }, 300);
+    return () => clearTimeout(t);
   }, [category, q]);
 
   const sortedPartners = !partners ? null : sortBy === 'bonus'
@@ -80,6 +94,8 @@ export default function PartnerDirectory() {
           <option value="bonus">Sort: Highest Marketing Fee first</option>
         </Select>
       </div>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       {!sortedPartners ? <PageLoading /> : locked ? (
         <EmptyState

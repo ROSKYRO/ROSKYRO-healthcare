@@ -1,14 +1,24 @@
 import { useEffect, useState } from 'react';
 import api from '../../lib/api';
+import UpgradePrompt from '../../components/UpgradePrompt';
 import { Card, PageLoading, EmptyState } from '../../components/ui';
 
 export default function Reports() {
   const [reports, setReports] = useState(null);
+  const [blocked, setBlocked] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/reports').then((res) => setReports(res.data.reports));
+    // Previously no .catch at all -- a 402 (Grow plan not active) or any
+    // other failure left `reports` at null forever, a permanent spinner.
+    api.get('/reports').then((res) => setReports(res.data.reports)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else { setError('Could not load reports. Please try again.'); setReports([]); }
+    });
   }, []);
 
+  if (blocked) return <UpgradePrompt pillar="grow" />;
+  if (error) return <p className="text-sm text-rose-600">{error}</p>;
   if (!reports) return <PageLoading />;
 
   return (

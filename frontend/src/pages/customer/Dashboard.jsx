@@ -26,11 +26,29 @@ function UpsellCard({ pillar }) {
 export default function CustomerDashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get('/dashboard/customer').then((res) => setData(res.data));
-  }, []);
+  const load = () => {
+    setError('');
+    // Previously no .catch -- this is the very first page every customer
+    // user lands on after logging in, so a transient network/5xx error
+    // here meant a permanent loading spinner with no way to recover short
+    // of a hard refresh.
+    api.get('/dashboard/customer').then((res) => setData(res.data)).catch(() => {
+      setError('Could not load your dashboard. Please try again.');
+    });
+  };
 
+  useEffect(load, []);
+
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!data) return <PageLoading />;
   const pillars = data.activePillars || [];
   const hasGrow = pillars.includes('grow');
