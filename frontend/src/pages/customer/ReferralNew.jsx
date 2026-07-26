@@ -1,53 +1,115 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { canCreateReferrals } from '../../lib/referralRights';
-import { Card, Button, Input, Select, Textarea, EmptyState } from '../../components/ui';
+import { Card, Button, Input, Select, Textarea, Badge, EmptyState } from '../../components/ui';
 
+// The 3-click referral flow:
+//   1. Type/scan the patient's booking code (from QR self-booking) and hit
+//      Enter -> their name + phone auto-fill. No booking code on file (a
+//      walk-in, or an appointment taken over the counter)? Just type the
+//      name/phone in by hand instead -- nothing here is required to proceed.
+//   2. Type what the patient needs (e.g. "blood test", "xray", "cardiologist")
+//      -> every partner in the network offering that shows up live.
+//   3. Click one of them -> the referral fires immediately.
+// Urgency + clinical notes are folded in as one small optional toggle
+// (default: routine, no notes) rather than a separate full form -- they're
+// clinically useful often enough to keep, but shouldn't cost an extra step
+// for the common case.
 export default function ReferralNew() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [categories, setCategories] = useState([]);
-  const [category, setCategory] = useState('');
-  const [city, setCity] = useState('');
-  const [partners, setPartners] = useState([]);
-  const [recommendations, setRecommendations] = useState([]);
+
+  const [bookingCode, setBookingCode] = useState('');
+  const [bookingLookup, setBookingLookup] = useState('idle'); // idle | loading | found | notfound
+  const [patientLocked, setPatientLocked] = useState(false);
+
   const [form, setForm] = useState({
-    partnerId: '', patientName: '', patientPhone: '', patientAge: '', patientGender: '',
-    serviceRequested: '', clinicalNotes: '', urgency: 'routine',
+    patientName: '', patientPhone: '', patientAge: '', patientGender: '',
+    clinicalNotes: '', urgency: 'routine',
   });
+  const [showMoreDetails, setShowMoreDetails] = useState(false);
+
+  const [serviceKeyword, setServiceKeyword] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchedOnce, setSearchedOnce] = useState(false);
+  const debounceRef = useRef(null);
+
+  const [referringPartnerId, setReferringPartnerId] = useState(null);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
 
+  // Debounced live search as the service keyword is typed.
   useEffect(() => {
-    api.get('/partners/categories').then((res) => setCategories(res.data.categories));
-  }, []);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const keyword = serviceKeyword.trim();
+    if (!keyword) { setSearchResults([]); setSearchedOnce(false); return; }
+    setSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await api.get('/partners/search-by-service', { params: { keyword } });
+        setSearchResults(res.data.partners);
+      } finally {
+        setSearching(false);
+        setSearchedOnce(true);
+      }
+    }, 350);
+    return () => clearTimeout(debounceRef.current);
+  }, [serviceKeyword]);
 
-  useEffect(() => {
-    if (!category) { setPartners([]); return; }
-    api.get('/partners', { params: { category, city: city || undefined, verifiedOnly: true } }).then((res) => setPartners(res.data.partners));
-    api.get('/partners/recommendations', { params: { category, city: city || undefined } }).then((res) => setRecommendations(res.data.recommendations));
-  }, [category, city]);
+  async function lookupBooking(e) {
+    e.preventDefault();
+    const code = bookingCode.trim();
+    if (!code) return;
+    setBookingLookup('loading');
+    setError('');
+    try {
+      const res = await api.get(`/appointments/lookup/${encodeURIComponent(code)}`);
+      const appt = res.data.appointment;
+      setForm((f) => ({ ...f, patientName: appt.patient_name || '', patientPhone: appt.patient_phone || '' }));
+      setPatientLocked(true);
+      setBookingLookup('found');
+    } catch (err) {
+      setBookingLookup('notfound');
+      setPatientLocked(false);
+    }
+  }
 
-  function set(key) {
+  function clearBooking() {
+    setBookingCode('');
+    setBookingLookup('idle');
+    setPatientLocked(false);
+    setForm((f) => ({ ...f, patientName: '', patientPhone: '' }));
+  }
+
+  function setField(key) {
     return (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  async function referTo(partner) {
     setError('');
-    setLoading(true);
+    if (!form.patientName.trim()) {
+      setError('Patient ka naam zaroori hai — booking code se auto-fill karo ya khud bhar do.');
+      return;
+    }
+    setReferringPartnerId(partner.id);
     try {
       const { data } = await api.post('/referrals', {
-        ...form,
+        partnerId: partner.id,
+        patientName: form.patientName,
+        patientPhone: form.patientPhone || undefined,
         patientAge: form.patientAge ? Number(form.patientAge) : undefined,
+        patientGender: form.patientGender || undefined,
+        serviceRequested: serviceKeyword.trim() || partner.category_name || 'Referral',
+        clinicalNotes: form.clinicalNotes || undefined,
+        urgency: form.urgency,
       });
       navigate(`/app/referrals/${data.referral.id}`);
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not create referral.');
     } finally {
-      setLoading(false);
+      setReferringPartnerId(null);
     }
   }
 
@@ -65,71 +127,116 @@ export default function ReferralNew() {
     <div className="max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">New Referral</h1>
-        <p className="text-sm text-gray-500 mt-1">Refer a patient to a trusted partner in the ROSKYRO network. We'll generate the referral slip and QR code automatically.</p>
+        <p className="text-sm text-gray-500 mt-1">Booking code daalo (ya naam/phone khud bharo), jo service chahiye uska keyword type karo, aur ek partner select karo — referral turant ban jaayega.</p>
       </div>
 
       <Card className="p-6 space-y-5">
-        <div className="grid grid-cols-2 gap-4">
-          <Select label="Service category" value={category} onChange={(e) => { setCategory(e.target.value); setForm((f) => ({ ...f, partnerId: '' })); }}>
-            <option value="">Select a category</option>
-            {categories.map((c) => <option key={c.slug} value={c.slug}>{c.name}</option>)}
-          </Select>
-          <Input label="City (optional filter)" value={city} onChange={(e) => setCity(e.target.value)} placeholder="Pune" />
+        {/* Step 1: booking code -> auto-fill, or manual patient details */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">1. Patient</p>
+          {!patientLocked ? (
+            <form onSubmit={lookupBooking} className="flex gap-2 items-end mb-3">
+              <Input
+                label="Booking code (optional)"
+                placeholder="e.g. BK-000042"
+                value={bookingCode}
+                onChange={(e) => setBookingCode(e.target.value)}
+                className="flex-1"
+              />
+              <Button type="submit" variant="secondary" disabled={bookingLookup === 'loading' || !bookingCode.trim()}>
+                {bookingLookup === 'loading' ? '…' : 'Lookup'}
+              </Button>
+            </form>
+          ) : (
+            <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 mb-3">
+              <div>
+                <p className="text-sm font-medium text-emerald-800">✓ Auto-filled from booking {bookingCode}</p>
+                <p className="text-sm text-emerald-700">{form.patientName} · {form.patientPhone}</p>
+              </div>
+              <Button type="button" size="sm" variant="ghost" onClick={clearBooking}>Not this patient? Clear</Button>
+            </div>
+          )}
+
+          {bookingLookup === 'notfound' && (
+            <p className="text-xs text-amber-600 mb-3">Booking code nahi mila — patient ki details neeche khud bhar do.</p>
+          )}
+
+          {!patientLocked && (
+            <div className="grid grid-cols-2 gap-4">
+              <Input label="Patient name" required value={form.patientName} onChange={setField('patientName')} />
+              <Input label="Patient phone" value={form.patientPhone} onChange={setField('patientPhone')} />
+              <Input label="Patient age (optional)" type="number" value={form.patientAge} onChange={setField('patientAge')} />
+              <Select label="Gender (optional)" value={form.patientGender} onChange={setField('patientGender')}>
+                <option value="">—</option>
+                <option>Male</option>
+                <option>Female</option>
+                <option>Other</option>
+              </Select>
+            </div>
+          )}
         </div>
 
-        {recommendations.length > 0 && (
-          <div className="bg-brand-50 border border-brand-100 rounded-xl p-4">
-            <p className="text-xs font-semibold text-brand-700 uppercase tracking-wide mb-2">AI-suggested partners</p>
-            <div className="space-y-2">
-              {recommendations.map((r) => (
+        {/* Optional: urgency + clinical notes -- collapsed by default */}
+        <div>
+          <button type="button" className="text-xs text-gray-400 hover:text-gray-600 underline" onClick={() => setShowMoreDetails((s) => !s)}>
+            {showMoreDetails ? 'Hide clinical notes / urgency' : `+ Add clinical notes or mark urgent/emergency${form.urgency !== 'routine' ? ` (currently: ${form.urgency})` : ''}`}
+          </button>
+          {showMoreDetails && (
+            <div className="grid grid-cols-2 gap-4 mt-3">
+              <Select label="Urgency" value={form.urgency} onChange={setField('urgency')}>
+                <option value="routine">Routine</option>
+                <option value="urgent">Urgent</option>
+                <option value="emergency">Emergency</option>
+              </Select>
+              <Textarea label="Clinical notes (optional)" rows={2} value={form.clinicalNotes} onChange={setField('clinicalNotes')} className="col-span-2" />
+            </div>
+          )}
+        </div>
+
+        {/* Step 2 + 3: service keyword -> partner list -> click to refer */}
+        <div>
+          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">2. Service needed → 3. Select a partner</p>
+          <Input
+            placeholder="e.g. blood test, xray, cardiologist"
+            value={serviceKeyword}
+            onChange={(e) => setServiceKeyword(e.target.value)}
+          />
+
+          {searching && <p className="text-xs text-gray-400 mt-2">Searching…</p>}
+
+          {!searching && searchedOnce && searchResults.length === 0 && (
+            <p className="text-xs text-gray-400 mt-2">Koi partner nahi mila is keyword ke liye — thoda alag keyword try karo (jaise poori category ka naam).</p>
+          )}
+
+          {searchResults.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {searchResults.map((p) => (
                 <button
+                  key={p.id}
                   type="button"
-                  key={r.id}
-                  onClick={() => setForm((f) => ({ ...f, partnerId: r.id }))}
-                  className={`w-full text-left text-sm px-3 py-2 rounded-lg border ${form.partnerId === r.id ? 'border-brand-600 bg-white' : 'border-transparent hover:bg-white/60'}`}
+                  disabled={referringPartnerId !== null}
+                  onClick={() => referTo(p)}
+                  className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-brand-400 hover:bg-brand-50 flex items-center justify-between disabled:opacity-60"
                 >
-                  <span className="font-medium text-gray-900">{r.org_name}</span>
-                  <span className="text-gray-400"> — {r.city} · score {Math.round(r.ai_score)}</span>
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {p.org_name} {p.preferred_partner && <span className="text-brand-600">★</span>}
+                    </p>
+                    <p className="text-xs text-gray-500">{p.category_name} · {p.city || 'City n/a'}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {p.verification_status === 'verified' ? <Badge tone="verified">verified</Badge> : <Badge tone="pending">pending</Badge>}
+                    <span className="text-sm text-brand-700 font-medium">
+                      {referringPartnerId === p.id ? 'Referring…' : 'Refer →'}
+                    </span>
+                  </div>
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-400 mt-2">A ROSKYRO team member or you make the final call — this is a suggestion, not an auto-assignment.</p>
-          </div>
-        )}
-
-        <Select label="Partner" required value={form.partnerId} onChange={set('partnerId')} disabled={!category}>
-          <option value="">{category ? 'Select a partner' : 'Choose a category first'}</option>
-          {partners.map((p) => (
-            <option key={p.id} value={p.id}>{p.org_name} — {p.city} {p.preferred_partner ? '★ preferred' : ''}</option>
-          ))}
-        </Select>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Input label="Patient name" required value={form.patientName} onChange={set('patientName')} />
-          <Input label="Patient phone" value={form.patientPhone} onChange={set('patientPhone')} />
-          <Input label="Patient age" type="number" value={form.patientAge} onChange={set('patientAge')} />
-          <Select label="Gender" value={form.patientGender} onChange={set('patientGender')}>
-            <option value="">—</option>
-            <option>Male</option>
-            <option>Female</option>
-            <option>Other</option>
-          </Select>
+          )}
         </div>
-
-        <Input label="Service requested" required value={form.serviceRequested} onChange={set('serviceRequested')} placeholder="e.g. MRI Brain" />
-        <Textarea label="Clinical notes (optional)" rows={3} value={form.clinicalNotes} onChange={set('clinicalNotes')} />
-
-        <Select label="Urgency" value={form.urgency} onChange={set('urgency')}>
-          <option value="routine">Routine</option>
-          <option value="urgent">Urgent</option>
-          <option value="emergency">Emergency</option>
-        </Select>
 
         {error && <p className="text-sm text-rose-600">{error}</p>}
-
-        <div className="flex gap-3">
-          <Button onClick={handleSubmit} disabled={loading || !form.partnerId}>{loading ? 'Sending…' : 'Send Referral'}</Button>
-        </div>
       </Card>
     </div>
   );
