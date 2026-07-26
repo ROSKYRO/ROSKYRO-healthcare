@@ -3,7 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from app.db import settlement_rules, settlements, referrals, organizations, partners, partner_categories, statements, platform_settings, marketing_payouts
+from app.db import settlement_rules, settlements, referrals, organizations, partners, partner_categories, statements, platform_settings, marketing_payouts, subscription_renewals
 from app.auth import get_current_user, require_internal, require_roles
 from app.utils.roles import is_internal
 from app.utils.audit import log_audit
@@ -568,6 +568,134 @@ async def marketing_payout_invoice(payout_id: str, current_user: dict = Depends(
         content=pdf_bytes, media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/admin-wallet", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def admin_wallet_summary(period: str = Query(..., description="YYYY-MM")):
+    """The super-admin-only consolidated 'earnings wallet' view: every rupee
+    that moved through ROSKYRO's two revenue streams for one calendar
+    period, in one place.
+
+    Two streams flow IN to ROSKYRO:
+      - Marketing Fees a PARTNER pays for a completed referral (settlements
+        collection, scoped by period_month).
+      - Subscription renewal charges a BUSINESS pays for their own
+        GROW/MANAGE/Networking Marketing/Complete plan (subscription_renewals
+        collection, scoped by period).
+    One stream flows OUT of ROSKYRO:
+      - The Marketing Fee Payout ROSKYRO owes back to referring businesses --
+        a fixed % of the Marketing Fees collected because of their referrals
+        this period (same _marketing_report_row computation the existing
+        internal Marketing Payouts page already uses).
+
+    Each inflow is broken into collected (paid + confirmed) / awaiting the
+    payer's own claim / claimed-but-not-yet-confirmed by ROSKYRO, so the
+    dashboard shows not just what's landed but what's still moving through
+    the two-sided confirmation pipeline. Everything here is scoped to a
+    single `period` on purpose -- next month starts this same computation
+    from zero again, exactly like the underlying settlements/subscription
+    charges already do (nothing here is a running lifetime balance)."""
+
+    # --- Subscription renewal charges for this period ---
+    sub_charges = await subscription_renewals.find({"period": period}).to_list(None)
+    sub_collected = [c for c in sub_charges if c["status"] == "paid"]
+    sub_awaiting_confirmation = [c for c in sub_charges if c["status"] == "pending" and c.get("payer_marked_paid_at")]
+    sub_awaiting_payment = [c for c in sub_charges if c["status"] == "pending" and not c.get("payer_marked_paid_at")]
+    subscription_summary = {
+        "collected_amount": round(sum(float(c.get("amount") or 0) for c in sub_collected), 2),
+        "collected_count": len(sub_collected),
+        "awaiting_confirmation_amount": round(sum(float(c.get("amount") or 0) for c in sub_awaiting_confirmation), 2),
+        "awaiting_confirmation_count": len(sub_awaiting_confirmation),
+        "awaiting_payment_amount": round(sum(float(c.get("amount") or 0) for c in sub_awaiting_payment), 2),
+        "awaiting_payment_count": len(sub_awaiting_payment),
+        "total_charged_amount": round(sum(float(c.get("amount") or 0) for c in sub_charges), 2),
+        "total_charged_count": len(sub_charges),
+    }
+
+    # --- Marketing Fees partners owe ROSKYRO for this period ---
+    mkt_settlements = await settlements.find({"period_month": period}).to_list(None)
+    mkt_collected = [s for s in mkt_settlements if s["status"] == "paid"]
+    mkt_awaiting_confirmation = [s for s in mkt_settlements if s["status"] == "pending" and s.get("payer_marked_paid_at")]
+    mkt_awaiting_payment = [s for s in mkt_settlements if s["status"] == "pending" and not s.get("payer_marked_paid_at")]
+    marketing_fees_summary = {
+        "collected_amount": round(sum(float(s.get("amount") or 0) for s in mkt_collected), 2),
+        "collected_count": len(mkt_collected),
+        "awaiting_confirmation_amount": round(sum(float(s.get("amount") or 0) for s in mkt_awaiting_confirmation), 2),
+        "awaiting_confirmation_count": len(mkt_awaiting_confirmation),
+        "awaiting_payment_amount": round(sum(float(s.get("amount") or 0) for s in mkt_awaiting_payment), 2),
+        "awaiting_payment_count": len(mkt_awaiting_payment),
+        "total_charged_amount": round(sum(float(s.get("amount") or 0) for s in mkt_settlements), 2),
+        "total_charged_count": len(mkt_settlements),
+    }
+
+    # --- Marketing Fee Payouts ROSKYRO owes OUT to referring businesses, business-wise ---
+    rate = await _marketing_fee_payout_percentage()
+    org_ids = await settlements.distinct("org_id", {"period_month": period})
+    businesses = []
+    for org_id in org_ids:
+        org = await organizations.find_one({"_id": org_id})
+        if not org:
+            continue
+        businesses.append(await _marketing_report_row(org, period, rate))
+    businesses.sort(key=lambda r: -r["total_fees_collected"])
+
+    # _marketing_report_row's total_fees_collected/payout_amount are a LIVE
+    # sum over settlements not yet tagged into any payout
+    # (included_in_payout_id: None) -- correct for "what would a new payout
+    # generate right now", but once a business's payout for this period IS
+    # generated, its contributing settlements get tagged and drop out of
+    # that live sum, so the row recomputes to 0 even though the payout
+    # itself (and its locked-in amount) still exists. Overlay the finalized
+    # payout doc's own immutable total_fees_collected/payout_amount here so
+    # a paid-out or pending-payout business still displays what it actually
+    # was/will be paid, not a misleading 0.
+    existing_payouts_this_period = await marketing_payouts.find({"period": period}).to_list(None)
+    payout_doc_by_org = {p["org_id"]: p for p in existing_payouts_this_period}
+    for b in businesses:
+        payout_doc = payout_doc_by_org.get(b["org_id"])
+        if payout_doc:
+            b["total_fees_collected"] = payout_doc["total_fees_collected"]
+            b["payout_amount"] = payout_doc["payout_amount"]
+
+    already_paid_amount = round(sum(float(p["payout_amount"] or 0) for p in existing_payouts_this_period if p["status"] == "paid"), 2)
+    already_paid_count = len([p for p in existing_payouts_this_period if p["status"] == "paid"])
+    # "Pending to send" covers BOTH a payout already generated but not yet
+    # marked paid (its amount is locked in on the payout doc) AND a business
+    # with fees collected but no payout generated yet at all (its amount is
+    # only a live estimate of what generating one now would produce).
+    pending_generated = [p for p in existing_payouts_this_period if p["status"] != "paid"]
+    pending_not_yet_generated = [b for b in businesses if b["payout_status"] == "not_generated" and b["payout_amount"] > 0]
+    pending_to_send_amount = round(
+        sum(float(p["payout_amount"] or 0) for p in pending_generated)
+        + sum(b["payout_amount"] for b in pending_not_yet_generated),
+        2,
+    )
+    pending_to_send_count = len(pending_generated) + len(pending_not_yet_generated)
+
+    payouts_summary = {
+        "businesses": businesses,
+        "payout_percentage": rate,
+        "already_paid_amount": already_paid_amount,
+        "already_paid_count": already_paid_count,
+        "pending_to_send_amount": pending_to_send_amount,
+        "pending_to_send_count": pending_to_send_count,
+    }
+
+    total_collected_this_period = round(subscription_summary["collected_amount"] + marketing_fees_summary["collected_amount"], 2)
+    wallet_summary = {
+        "total_collected_this_period": total_collected_this_period,
+        "already_paid_out_to_businesses": payouts_summary["already_paid_amount"],
+        "pending_to_send_to_businesses": payouts_summary["pending_to_send_amount"],
+        "net_after_payouts": round(total_collected_this_period - payouts_summary["already_paid_amount"] - payouts_summary["pending_to_send_amount"], 2),
+    }
+
+    return {
+        "period": period,
+        "subscription": subscription_summary,
+        "marketing_fees": marketing_fees_summary,
+        "marketing_fee_payouts": payouts_summary,
+        "wallet": wallet_summary,
+    }
 
 
 @router.get("/statements")
