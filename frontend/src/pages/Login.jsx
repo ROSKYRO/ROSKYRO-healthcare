@@ -10,6 +10,13 @@ const DEMO_ACCOUNTS = [
   { label: 'Partner Admin (CityScan Diagnostics)', identifier: 'admin.cityscan.diagnostics@example.com' },
 ];
 
+// Off by default -- a live/production build must NOT ship real seeded
+// account emails + a one-click auto-fill of their password on the public
+// login page (that's a walk-up login bypass for anyone who finds the
+// site). Opt in per-environment with REACT_APP_SHOW_DEMO_LOGINS=true
+// (e.g. only on a staging/demo deployment), never left on by default.
+const SHOW_DEMO_LOGINS = process.env.REACT_APP_SHOW_DEMO_LOGINS === 'true';
+
 function ForgotPasswordPanel({ onClose }) {
   const [identifier, setIdentifier] = useState('');
   const [note, setNote] = useState('');
@@ -85,7 +92,7 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('Roskyro@123');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
@@ -145,24 +152,26 @@ export default function Login() {
                 New healthcare business? <Link to="/register" className="text-brand-700 font-medium">Create an account</Link>
               </p>
 
-              <div className="mt-8 border-t border-gray-200 pt-6">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Demo accounts (password: Roskyro@123)</p>
-                <div className="space-y-1">
-                  {DEMO_ACCOUNTS.map((a) => (
-                    <button
-                      key={a.identifier}
-                      type="button"
-                      onClick={() => setIdentifier(a.identifier)}
-                      className="block text-left text-xs text-brand-700 hover:underline"
-                    >
-                      {a.label} — {a.identifier}
-                    </button>
-                  ))}
+              {SHOW_DEMO_LOGINS && (
+                <div className="mt-8 border-t border-gray-200 pt-6">
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Demo accounts (password: Roskyro@123)</p>
+                  <div className="space-y-1">
+                    {DEMO_ACCOUNTS.map((a) => (
+                      <button
+                        key={a.identifier}
+                        type="button"
+                        onClick={() => setIdentifier(a.identifier)}
+                        className="block text-left text-xs text-brand-700 hover:underline"
+                      >
+                        {a.label} — {a.identifier}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Mobile-number login also works for every seeded account — ask a super admin for the number.
+                  </p>
                 </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  Mobile-number login also works for every seeded account — ask a super admin for the number.
-                </p>
-              </div>
+              )}
             </>
           ) : (
             <ForgotPasswordPanel onClose={() => setShowForgot(false)} />

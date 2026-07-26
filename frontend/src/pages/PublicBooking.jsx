@@ -155,6 +155,14 @@ export default function PublicBooking() {
           ) : (
             <p className="text-xs text-gray-500 mt-4">No payment required — reception par apna token number bata dein.</p>
           )}
+
+          {result.bookingCode && (
+            <div className="mt-4 rounded-xl border border-brand-100 bg-brand-50 p-3">
+              <p className="text-xs text-brand-700">Your unique booking code (keep this safe)</p>
+              <p className="text-xl font-bold font-mono text-brand-800 mt-0.5">{result.bookingCode}</p>
+              <p className="text-xs text-gray-500 mt-1">Agar aapko kisi partner (lab/specialist) ke paas refer kiya jaata hai, ye code doctor ko dena — aapki details dobara nahi bharni padengi.</p>
+            </div>
+          )}
         </Card>
       </CenterShell>
     );
