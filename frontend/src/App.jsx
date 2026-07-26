@@ -54,6 +54,7 @@ import AdminWallet from './pages/internal/AdminWallet';
 import Roster from './pages/internal/Roster';
 import PricingManagement from './pages/internal/PricingManagement';
 import PasswordRequests from './pages/internal/PasswordRequests';
+import WhatsappQueue from './pages/internal/WhatsappQueue';
 
 import ReferralDetail from './pages/shared/ReferralDetail';
 
@@ -116,6 +117,7 @@ export default function App() {
           <Route path="/team/settlements" element={<ProtectedRoute allow={['internal']}><InternalSettlements /></ProtectedRoute>} />
           <Route path="/team/marketing-payouts" element={<ProtectedRoute allow={['internal']}><MarketingPayouts /></ProtectedRoute>} />
           <Route path="/team/subscription-renewals" element={<ProtectedRoute allow={['internal']}><SubscriptionRenewals /></ProtectedRoute>} />
+          <Route path="/team/whatsapp-queue" element={<ProtectedRoute allow={['internal']}><WhatsappQueue /></ProtectedRoute>} />
           <Route path="/team/wallet" element={<ProtectedRoute allow={['internal']}><AdminWallet /></ProtectedRoute>} />
           <Route path="/team/roster" element={<ProtectedRoute allow={['internal']}><Roster /></ProtectedRoute>} />
           <Route path="/team/pricing" element={<ProtectedRoute allow={['internal']}><PricingManagement /></ProtectedRoute>} />
