@@ -46,7 +46,7 @@ _INDEX_PLAN = [
     (referrals, ["referring_org_id", "partner_id", "status", "created_at"]),
     (referral_status_history, ["referral_id"]),
     (referral_followups, ["referral_id"]),
-    (settlement_rules, ["partner_id", "scope", "is_active"]),
+    (settlement_rules, ["partner_id", "scope", "is_active", "category_id"]),
     (settlements, ["org_id", "partner_id", "period_month", "status", "included_in_payout_id"]),
     (marketing_payouts, ["org_id", "period"]),
     (statements, [[("party_type", 1), ("party_id", 1)]]),

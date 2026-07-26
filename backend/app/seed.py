@@ -392,6 +392,42 @@ async def run():
                       "custom_terms": None, "is_active": True, "created_by": team_ids["roskyro_admin"], "created_at": now()}
     await settlement_rules.insert_one(punelife_rule)
 
+    # Category-level default Marketing Fees -- sit between a business-
+    # specific "org" override and the platform-wide fallback in the
+    # resolution order (see routers/referrals.py). Without these, every
+    # partner that hasn't self-set their own rate (or been given a
+    # negotiated override) falls all the way through to the single
+    # platform-wide number above -- which doesn't account for a ~₹200
+    # blood test and a ~₹8,000 MRI scan being worth very different flat
+    # fees. Amounts below are illustrative defaults, roughly scaled to
+    # each category's typical real-world service price; ROSKYRO can tune
+    # them anytime via /settlements/category-rates (see the "Fee Rules"
+    # section of Pricing & Payments in the internal dashboard). Only a
+    # representative set is seeded here -- not every category needs a
+    # default from day one, and any category left unset simply falls
+    # through to the platform default, same as before this feature existed.
+    CATEGORY_DEFAULT_FEES = {
+        "blood_test_labs": 40, "pathology_labs": 50, "diagnostic_centers": 100,
+        "home_sample_collection": 30, "xray_centers": 60, "usg_centers": 120,
+        "ct_scan_centers": 350, "mri_centers": 500, "pet_scan_centers": 700,
+        "mammography_centers": 150, "dexa_scan_centers": 150,
+        "cardiology_diagnostic_centers": 200, "neurology_diagnostic_centers": 200,
+        "ecg_centers": 50, "eeg_centers": 150, "emg_ncv_centers": 200,
+        "pft_centers": 100, "sleep_study_labs": 300, "histopathology_labs": 150,
+        "genetic_testing_labs": 600, "molecular_diagnostic_labs": 500,
+        "microbiology_labs": 80,
+        "physiotherapy_centers": 150, "rehabilitation_centers": 200,
+        "occupational_therapy_centers": 150, "speech_therapy_centers": 150,
+        "pain_management_clinics": 200, "sports_injury_clinics": 200,
+        "physiotherapy_at_home": 150, "elder_care_services": 200,
+    }
+    for slug, amount in CATEGORY_DEFAULT_FEES.items():
+        await settlement_rules.insert_one({
+            "_id": new_id(), "scope": "category", "org_id": None, "partner_id": None, "category_id": cat_ids[slug],
+            "settlement_type": "flat_fee", "flat_fee_amount": amount, "percentage_rate": None,
+            "custom_terms": None, "is_active": True, "created_by": team_ids["roskyro_admin"], "created_at": now(),
+        })
+
     # -----------------------------------------------------------------
     # Referrals across the full status range
     # -----------------------------------------------------------------
@@ -467,9 +503,15 @@ async def run():
 
         if status == "completed":
             partner_id = spec["partner"]["partner"]["_id"]
-            rule = await settlement_rules.find_one({"partner_id": partner_id})
+            # Mirrors routers/referrals.py's real resolution order (minus
+            # org_partner_pair and business-specific "org" overrides, which
+            # this demo data doesn't seed): partner's own rate -> category
+            # default -> platform fallback.
+            rule = await settlement_rules.find_one({"scope": "partner", "partner_id": partner_id, "is_active": True})
             if not rule:
-                rule = await settlement_rules.find_one({"scope": "platform"})
+                rule = await settlement_rules.find_one({"scope": "category", "category_id": referral_doc["category_id"], "is_active": True})
+            if not rule:
+                rule = await settlement_rules.find_one({"scope": "platform", "is_active": True})
             if rule and rule["settlement_type"] != "none":
                 # Marketing Fee: a flat rupee amount only -- percentage-
                 # based settlement has been removed entirely. Owed by the
