@@ -5,7 +5,30 @@ from app.auth import get_current_user
 from app.utils.pillars import PILLAR_CODES, get_active_pillars  # re-exported
 from app.utils.ids import now, as_aware
 
-__all__ = ["PILLAR_CODES", "get_active_pillars", "require_plan", "next_renewal_date"]
+__all__ = ["PILLAR_CODES", "get_active_pillars", "require_plan", "next_renewal_date", "add_cycle"]
+
+
+def add_cycle(d, billing_cycle: str):
+    """Advance a datetime by one billing cycle ('monthly' or 'yearly'),
+    clamping to the last valid day of the target month (e.g. Jan 31 + 1
+    month -> Feb 28/29, not an invalid Feb 31). Shared by
+    next_renewal_date() below and routers/subscription_renewals.py's
+    renewal-due calendar math, so both agree on exactly what "one cycle
+    later" means for a given subscription."""
+    if billing_cycle == "yearly":
+        try:
+            return d.replace(year=d.year + 1)
+        except ValueError:
+            # Feb 29 on a non-leap year landing spot
+            return d.replace(month=3, day=1, year=d.year + 1)
+    # monthly
+    month = d.month + 1
+    year = d.year + (1 if month > 12 else 0)
+    month = 1 if month > 12 else month
+    day = d.day
+    import calendar
+    last_day = calendar.monthrange(year, month)[1]
+    return d.replace(year=year, month=month, day=min(day, last_day))
 
 
 def require_plan(pillar: str):
@@ -42,26 +65,10 @@ def next_renewal_date(started_at, billing_cycle: str):
         return None
     started_at = as_aware(started_at)
 
-    def add_cycle(d):
-        if billing_cycle == "yearly":
-            try:
-                return d.replace(year=d.year + 1)
-            except ValueError:
-                # Feb 29 on a non-leap year landing spot
-                return d.replace(month=3, day=1, year=d.year + 1)
-        # monthly
-        month = d.month + 1
-        year = d.year + (1 if month > 12 else 0)
-        month = 1 if month > 12 else month
-        day = d.day
-        import calendar
-        last_day = calendar.monthrange(year, month)[1]
-        return d.replace(year=year, month=month, day=min(day, last_day))
-
     current = now()
     renewal = started_at
     for _ in range(1000):
         if renewal > current:
             break
-        renewal = add_cycle(renewal)
+        renewal = add_cycle(renewal, billing_cycle)
     return renewal
