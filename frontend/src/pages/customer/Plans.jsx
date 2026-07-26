@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import PricingCards from '../../components/PricingCards';
-import { Card, Badge, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
+import { Card, CardHeader, Table, Badge, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
 
 // Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
 // 'connect' now displays as "Networking Marketing" -- a plain .toUpperCase()
@@ -48,24 +48,134 @@ function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
   );
 }
 
+function SubscriptionRenewals({ renewals, payment, onMarkPaid, markingId, downloadingId, onDownloadInvoice }) {
+  if (renewals.length === 0) return null;
+
+  const pendingCharge = renewals.find((r) => r.status === 'pending' && !r.payer_marked_paid_at);
+  const awaitingConfirmation = renewals.filter((r) => r.status === 'pending' && r.payer_marked_paid_at);
+  const totalPaid = renewals.filter((r) => r.status === 'paid').reduce((sum, r) => sum + Number(r.amount), 0);
+  const totalPending = renewals.filter((r) => r.status !== 'paid').reduce((sum, r) => sum + Number(r.amount), 0);
+
+  return (
+    <Card>
+      <CardHeader
+        title="Subscription Renewal"
+        subtitle="Aapke ROSKYRO plan ki renewal charges yahan dikhengi — pehli billing period ke baad, ROSKYRO team har period ke liye renewal charge generate karti hai."
+      />
+
+      <div className="px-5 pb-2 grid sm:grid-cols-2 gap-4">
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+          <p className="text-xs text-gray-400">Paid so far</p>
+          <p className="text-xl font-bold text-emerald-700">{formatCurrency(totalPaid)}</p>
+        </div>
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+          <p className="text-xs text-gray-400">Pending (this + past periods)</p>
+          <p className="text-xl font-bold text-gray-900">{formatCurrency(totalPending)}</p>
+        </div>
+      </div>
+
+      {pendingCharge && (
+        <div className="mx-5 mb-2 bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <p className="text-sm text-gray-700">
+            <span className="font-semibold">{pendingCharge.plan_name}</span> renewal for{' '}
+            <span className="font-semibold">{pendingCharge.period}</span> — {formatCurrency(pendingCharge.amount)} due.
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            UPI pe pay karein: <span className="font-semibold text-gray-900">{payment?.upi_id}</span>
+            {payment?.payment_note ? ` — ${payment.payment_note}` : ''}
+          </p>
+          <Button
+            size="sm"
+            className="mt-3"
+            disabled={markingId === pendingCharge.id}
+            onClick={() => onMarkPaid(pendingCharge)}
+          >
+            {markingId === pendingCharge.id ? 'Marking…' : "I've Paid — Mark as Paid"}
+          </Button>
+        </div>
+      )}
+
+      {awaitingConfirmation.length > 0 && (
+        <p className="mx-5 mb-2 text-xs text-gray-500">
+          {awaitingConfirmation.length} renewal{awaitingConfirmation.length > 1 ? 's' : ''} marked paid by you — ROSKYRO team
+          confirmation ka wait ho raha hai.
+        </p>
+      )}
+
+      <Table
+        rows={renewals}
+        emptyMessage="Abhi tak koi renewal charge generate nahi hua hai."
+        columns={[
+          { key: 'period', header: 'Period' },
+          { key: 'plan_name', header: 'Plan' },
+          { key: 'amount', header: 'Amount', render: (r) => formatCurrency(r.amount) },
+          { key: 'status', header: 'Status', render: (r) => (
+            r.status === 'paid'
+              ? <Badge tone="paid">paid</Badge>
+              : (r.payer_marked_paid_at ? <Badge tone="pending">awaiting confirmation</Badge> : <Badge tone="pending">payment due</Badge>)
+          ) },
+          { key: 'invoice_number', header: 'Invoice', render: (r) => (
+            r.status === 'paid' ? (
+              <Button size="sm" variant="secondary" disabled={downloadingId === r.id} onClick={() => onDownloadInvoice(r)}>
+                {downloadingId === r.id ? 'Downloading…' : `⬇ ${r.invoice_number}`}
+              </Button>
+            ) : <span className="text-xs text-gray-400">Available once paid</span>
+          ) },
+        ]}
+      />
+    </Card>
+  );
+}
+
 export default function Plans() {
   const { refreshPillars } = useAuth();
   const [plans, setPlans] = useState(null);
   const [mine, setMine] = useState(null);
   const [payment, setPayment] = useState(null);
+  const [renewals, setRenewals] = useState(null);
   const [busyCode, setBusyCode] = useState(null);
   const [error, setError] = useState('');
   const [checkout, setCheckout] = useState(null); // { plan, cycle }
+  const [markingRenewalId, setMarkingRenewalId] = useState(null);
+  const [downloadingRenewalId, setDownloadingRenewalId] = useState(null);
 
   const load = useCallback(() => {
-    Promise.all([api.get('/plans'), api.get('/plans/mine'), api.get('/settings/payment')]).then(([p, m, s]) => {
+    Promise.all([api.get('/plans'), api.get('/plans/mine'), api.get('/settings/payment'), api.get('/subscription-renewals')]).then(([p, m, s, r]) => {
       setPlans(p.data.plans);
       setMine(m.data);
       setPayment(s.data);
+      setRenewals(r.data.renewals);
     });
   }, []);
 
   useEffect(load, [load]);
+
+  async function markRenewalPaid(renewal) {
+    setMarkingRenewalId(renewal.id);
+    try {
+      await api.post(`/subscription-renewals/${renewal.id}/mark-paid`, {});
+      load();
+    } finally {
+      setMarkingRenewalId(null);
+    }
+  }
+
+  async function downloadRenewalInvoice(renewal) {
+    setDownloadingRenewalId(renewal.id);
+    try {
+      const res = await api.get(`/subscription-renewals/${renewal.id}/invoice`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${renewal.invoice_number}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } finally {
+      setDownloadingRenewalId(null);
+    }
+  }
 
   function startCheckout(plan, cycle) {
     setError('');
@@ -104,7 +214,7 @@ export default function Plans() {
     }
   }
 
-  if (!plans || !mine || !payment) return <PageLoading />;
+  if (!plans || !mine || !payment || !renewals) return <PageLoading />;
 
   return (
     <div className="space-y-8">
@@ -173,6 +283,15 @@ export default function Plans() {
           )}
         </div>
       </Card>
+
+      <SubscriptionRenewals
+        renewals={renewals}
+        payment={payment}
+        onMarkPaid={markRenewalPaid}
+        markingId={markingRenewalId}
+        downloadingId={downloadingRenewalId}
+        onDownloadInvoice={downloadRenewalInvoice}
+      />
 
       {checkout && (
         <CheckoutModal
