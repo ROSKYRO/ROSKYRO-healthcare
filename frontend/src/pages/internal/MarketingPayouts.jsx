@@ -50,6 +50,7 @@ export default function MarketingPayouts() {
 
   async function downloadInvoice(payoutId, orgName) {
     setDownloadingId(payoutId);
+    setError('');
     try {
       const res = await api.get(`/settlements/marketing-payouts/${payoutId}/invoice`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
@@ -60,6 +61,8 @@ export default function MarketingPayouts() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Could not download this invoice. Please try again.');
     } finally {
       setDownloadingId(null);
     }

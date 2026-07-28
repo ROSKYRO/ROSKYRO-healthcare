@@ -39,9 +39,12 @@ function RequestRow({ req, onResolved }) {
 
   async function dismiss() {
     setBusy(true);
+    setError('');
     try {
       await api.post(`/password-resets/${req.id}/dismiss`);
       onResolved();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not dismiss this request. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -109,9 +112,13 @@ function RequestRow({ req, onResolved }) {
 export default function PasswordRequests() {
   const { user } = useAuth();
   const [requests, setRequests] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/password-resets').then((res) => setRequests(res.data.requests));
+    setLoadError('');
+    api.get('/password-resets').then((res) => setRequests(res.data.requests)).catch(() => {
+      setLoadError('Could not load password requests. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -124,6 +131,15 @@ export default function PasswordRequests() {
           Password reset requests can only be handled by a ROSKYRO super admin account.
         </p>
       </Card>
+    );
+  }
+
+  if (loadError && !requests) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{loadError}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
     );
   }
 

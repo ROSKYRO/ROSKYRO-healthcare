@@ -16,21 +16,28 @@ export default function Tasks() {
   const [status, setStatus] = useState('');
   const [tasks, setTasks] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     const params = { status: status || undefined };
     if (scope === 'mine') params.mine = 'true';
     else params.role = role;
-    api.get('/tasks', { params }).then((res) => setTasks(res.data.tasks));
+    setError('');
+    api.get('/tasks', { params }).then((res) => setTasks(res.data.tasks)).catch(() => {
+      setError('Could not load tasks. Please try again.');
+    });
   }, [scope, role, status]);
 
   useEffect(load, [load]);
 
   async function claim(id) {
     setBusyId(id);
+    setError('');
     try {
       await api.patch(`/tasks/${id}`, { assignedTo: user.id, status: 'in_progress' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not claim this task. Please try again.');
     } finally {
       setBusyId(null);
     }
@@ -38,12 +45,24 @@ export default function Tasks() {
 
   async function complete(id) {
     setBusyId(id);
+    setError('');
     try {
       await api.patch(`/tasks/${id}`, { status: 'done' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this task done. Please try again.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (error && !tasks) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!tasks) return <PageLoading />;
@@ -54,6 +73,8 @@ export default function Tasks() {
         <h1 className="text-2xl font-bold text-gray-900">Task Queue</h1>
         <p className="text-sm text-gray-500 mt-1">SLA-tracked work across every ROSKYRO team role.</p>
       </div>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <div className="flex flex-wrap gap-3">
         <Select value={scope} onChange={(e) => setScope(e.target.value)} className="max-w-[180px]">

@@ -8,7 +8,9 @@ export default function WhatsappQueue() {
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/whatsapp/queue').then((res) => setQueue(res.data.queue));
+    api.get('/whatsapp/queue').then((res) => setQueue(res.data.queue)).catch(() => {
+      setError('Could not load the WhatsApp queue. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -29,6 +31,15 @@ export default function WhatsappQueue() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (error && !queue) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!queue) return <PageLoading />;

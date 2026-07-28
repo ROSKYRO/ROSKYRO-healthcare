@@ -1,13 +1,28 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
-import { Card, Table, Badge, PageLoading } from '../../components/ui';
+import { Card, Table, Badge, Button, PageLoading } from '../../components/ui';
 
 export default function Roster() {
   const [roster, setRoster] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get('/tasks/team/roster').then((res) => setRoster(res.data.roster));
+  const load = useCallback(() => {
+    setError('');
+    api.get('/tasks/team/roster').then((res) => setRoster(res.data.roster)).catch(() => {
+      setError('Could not load the team roster. Please try again.');
+    });
   }, []);
+
+  useEffect(load, [load]);
+
+  if (error && !roster) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
 
   if (!roster) return <PageLoading />;
 

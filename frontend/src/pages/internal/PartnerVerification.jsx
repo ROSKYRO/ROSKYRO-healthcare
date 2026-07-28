@@ -7,21 +7,37 @@ export default function PartnerVerification() {
   const [filter, setFilter] = useState('pending');
   const [notes, setNotes] = useState({});
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/partners').then((res) => setPartners(res.data.partners));
+    setError('');
+    api.get('/partners').then((res) => setPartners(res.data.partners)).catch(() => {
+      setError('Could not load partners. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
 
   async function decide(id, decision) {
     setBusyId(id);
+    setError('');
     try {
       await api.post(`/partners/${id}/verify`, { decision, note: notes[id] || '' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not record this decision. Please try again.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (error && !partners) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!partners) return <PageLoading />;
@@ -40,6 +56,8 @@ export default function PartnerVerification() {
         <option value="rejected">Rejected</option>
         <option value="all">All</option>
       </Select>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <div className="space-y-4">
         {filtered.length === 0 && <Card className="p-8 text-center text-sm text-gray-400">No partners in this view.</Card>}

@@ -5,18 +5,25 @@ import { Card, Table, Badge, Button, PageLoading, formatCurrency, formatDate, fo
 export default function InternalSettlements() {
   const [settlements, setSettlements] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/settlements').then((res) => setSettlements(res.data.settlements));
+    setError('');
+    api.get('/settlements').then((res) => setSettlements(res.data.settlements)).catch(() => {
+      setError('Could not load Marketing Fees. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
 
   async function markPaid(id) {
     setBusyId(id);
+    setError('');
     try {
       await api.post(`/settlements/${id}/mark-paid`);
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this settlement as paid. Please try again.');
     } finally {
       setBusyId(null);
     }
@@ -24,12 +31,24 @@ export default function InternalSettlements() {
 
   async function confirmReceived(id) {
     setBusyId(id);
+    setError('');
     try {
       await api.post(`/settlements/${id}/confirm-received`);
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not confirm receipt. Please try again.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (error && !settlements) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!settlements) return <PageLoading />;
@@ -55,6 +74,8 @@ export default function InternalSettlements() {
         <p className="text-sm text-gray-500">Pending Marketing Fees total (unpaid, across all partners)</p>
         <p className="text-2xl font-bold text-gray-900">{formatCurrency(pendingTotal)}</p>
       </Card>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <Card>
         <Table

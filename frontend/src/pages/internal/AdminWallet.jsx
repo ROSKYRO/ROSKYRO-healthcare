@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../lib/api';
-import { Card, CardHeader, StatTile, Table, Badge, Input, PageLoading, formatCurrency } from '../../components/ui';
+import { Card, CardHeader, StatTile, Table, Badge, Button, Input, PageLoading, formatCurrency } from '../../components/ui';
 
 function currentMonth() {
   const d = new Date();
@@ -12,10 +12,14 @@ export default function AdminWallet() {
   const { user } = useAuth();
   const [period, setPeriod] = useState(currentMonth());
   const [summary, setSummary] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     if (user.role !== 'roskyro_admin') return;
-    api.get('/settlements/admin-wallet', { params: { period } }).then((res) => setSummary(res.data));
+    setError('');
+    api.get('/settlements/admin-wallet', { params: { period } }).then((res) => setSummary(res.data)).catch(() => {
+      setError('Could not load the earnings wallet. Please try again.');
+    });
   }, [period, user.role]);
 
   useEffect(load, [load]);
@@ -28,6 +32,15 @@ export default function AdminWallet() {
           The consolidated Earnings Wallet is only visible to a ROSKYRO super admin account.
         </p>
       </Card>
+    );
+  }
+
+  if (error && !summary) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
     );
   }
 

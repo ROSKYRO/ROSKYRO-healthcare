@@ -129,8 +129,10 @@ export default function PricingManagement() {
   const [platformRateBusy, setPlatformRateBusy] = useState(false);
   const [busyCategoryId, setBusyCategoryId] = useState(null);
   const [message, setMessage] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(() => {
+    setLoadError('');
     Promise.all([
       api.get('/plans'), api.get('/partner-plans'), api.get('/settings/payment'), api.get('/plans/subscriptions'), api.get('/settlements/marketing-fee-rate'),
       api.get('/settlements/platform-rate'), api.get('/settlements/category-rates'),
@@ -144,6 +146,8 @@ export default function PricingManagement() {
       setMarketingRateForm(String(mr.data.percentage));
       setPlatformRateForm(pr.data.rate?.flat_fee_amount != null ? String(pr.data.rate.flat_fee_amount) : '');
       setCategoryRates(cr.data.categoryRates);
+    }).catch(() => {
+      setLoadError('Could not load pricing & payment settings. Please try again.');
     });
   }, []);
 
@@ -160,7 +164,18 @@ export default function PricingManagement() {
     );
   }
 
-  if (!plans || !partnerPlans || !payment || !subscriptions || marketingRate == null || !categoryRates) return <PageLoading />;
+  const notLoaded = !plans || !partnerPlans || !payment || !subscriptions || marketingRate == null || !categoryRates;
+
+  if (loadError && notLoaded) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{loadError}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
+  if (notLoaded) return <PageLoading />;
 
   function renewalCell(sub) {
     if (sub.status !== 'active' || !sub.renewal_date) {
