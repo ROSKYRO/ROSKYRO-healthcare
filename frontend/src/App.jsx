@@ -58,6 +58,7 @@ import Roster from './pages/internal/Roster';
 import PricingManagement from './pages/internal/PricingManagement';
 import PasswordRequests from './pages/internal/PasswordRequests';
 import WhatsappQueue from './pages/internal/WhatsappQueue';
+import ResetDemoData from './pages/internal/ResetDemoData';
 
 import ReferralDetail from './pages/shared/ReferralDetail';
 
@@ -128,6 +129,7 @@ export default function App() {
           <Route path="/team/roster" element={<ProtectedRoute allow={['internal']}><Roster /></ProtectedRoute>} />
           <Route path="/team/pricing" element={<ProtectedRoute allow={['internal']}><PricingManagement /></ProtectedRoute>} />
           <Route path="/team/password-requests" element={<ProtectedRoute allow={['internal']}><PasswordRequests /></ProtectedRoute>} />
+          <Route path="/team/reset-demo-data" element={<ProtectedRoute allow={['internal']}><ResetDemoData /></ProtectedRoute>} />
 
           <Route path="*" element={<Landing />} />
         </Routes>
