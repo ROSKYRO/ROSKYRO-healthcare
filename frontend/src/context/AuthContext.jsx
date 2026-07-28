@@ -61,10 +61,21 @@ export function AuthProvider({ children }) {
   }
 
   async function refreshPillars() {
-    setUser((u) => u);
-    const endpoint = user?.appShell === 'partner' ? '/partner-plans/mine' : '/plans/mine';
-    const { data } = await api.get(endpoint);
-    setUser((u) => (u ? { ...u, activePillars: data.activePillars, monthlyTotal: data.monthlyTotal } : u));
+    // Swallow errors here rather than letting them propagate -- this is
+    // always called right AFTER a subscribe/cancel API call has already
+    // succeeded, just to refresh the cached activePillars/monthlyTotal on
+    // the user object. If this refresh itself hiccups (transient network
+    // blip), the caller's try/catch would otherwise wrongly tell the user
+    // "could not activate this plan" even though the plan change already
+    // went through -- only the local cache refresh failed. Worst case here
+    // is a stale pillar badge until the next page load/refresh.
+    try {
+      const endpoint = user?.appShell === 'partner' ? '/partner-plans/mine' : '/plans/mine';
+      const { data } = await api.get(endpoint);
+      setUser((u) => (u ? { ...u, activePillars: data.activePillars, monthlyTotal: data.monthlyTotal } : u));
+    } catch {
+      // Best-effort refresh only -- see comment above.
+    }
   }
 
   function logout() {
