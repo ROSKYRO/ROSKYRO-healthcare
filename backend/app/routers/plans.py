@@ -63,6 +63,22 @@ async def patch_plan(code: str, body: dict, current_user: dict = Depends(get_cur
             updates[snake] = body[snake]
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided.")
+    # Fixed: monthly_price/yearly_price were stored completely unvalidated.
+    # A non-numeric value saved here doesn't fail at write time -- it sits
+    # in the catalog, gets copied into a subscription's price_at_purchase
+    # the next time ANY business subscribes to this plan, and only THEN
+    # crashes with an unhandled ValueError the first time that business's
+    # own GET /plans/mine (my_subscriptions, below) does `float(price or
+    # 0)` on it. Same class of gap already fixed for doctors.py/
+    # appointments.py/booking_settings.py in earlier rounds -- an
+    # admin-side write with no numeric check breaking an unrelated,
+    # customer-facing read path later.
+    for price_field in ("monthly_price", "yearly_price"):
+        if price_field in updates and updates[price_field] is not None:
+            try:
+                updates[price_field] = float(updates[price_field])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{price_field} must be numeric.")
 
     result = await plans_collection.update_one({"_id": code}, {"$set": updates})
     updated = await plans_collection.find_one({"_id": code})

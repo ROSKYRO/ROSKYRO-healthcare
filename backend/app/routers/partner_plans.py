@@ -69,6 +69,17 @@ async def patch_partner_plan(code: str, body: dict, current_user: dict = Depends
             updates[snake] = body[snake]
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided.")
+    # Fixed: same gap as plans.py's patch_plan -- monthly_price/yearly_price
+    # were stored unvalidated, then crashed the first partner org's own
+    # GET /partner-plans/mine (my_partner_subscriptions, below) that did
+    # `float(price or 0)` on a subscription's price_at_purchase copied from
+    # a bad catalog value.
+    for price_field in ("monthly_price", "yearly_price"):
+        if price_field in updates and updates[price_field] is not None:
+            try:
+                updates[price_field] = float(updates[price_field])
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"{price_field} must be numeric.")
 
     await partner_plans_collection.update_one({"_id": code}, {"$set": updates})
     updated = await partner_plans_collection.find_one({"_id": code})
