@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -7,8 +8,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.config import CLIENT_ORIGIN, USE_MOCK_DB
+from app.config import CLIENT_ORIGIN, USE_MOCK_DB, JWT_SECRET, ADMIN_PASSWORD
 from app.utils.ids import now_iso
+
+logger = logging.getLogger("roskyro")
 
 from app.routers import (
     auth, orgs, partners, referrals, settlements, tasks, dashboard, notifications,
@@ -61,6 +64,38 @@ async def validation_exception_handler(request, exc: RequestValidationError):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "roskyro-healthcare-os-api", "time": now_iso()}
+
+
+@app.on_event("startup")
+async def warn_on_insecure_production_defaults():
+    """Fixed: config.py's JWT_SECRET and ADMIN_PASSWORD both fall back to
+    hardcoded literal defaults ("change_this_secret_in_production" /
+    "Roskyro@123") when their env vars aren't set -- and nothing anywhere
+    ever refused to boot or even logged a warning about it. Worse,
+    admin_bootstrap.py's sync_super_admin() runs on EVERY boot and
+    actively resets the super-admin's password back to whatever
+    ADMIN_PASSWORD currently resolves to, so a real (USE_MOCK_DB=false)
+    deployment that never set these in Railway's Variables tab would
+    silently run forever with a publicly-known admin password AND a JWT
+    signing secret sitting in this repo's source code (letting anyone
+    forge a valid token for any role). This never touches the mock/test
+    setup (USE_MOCK_DB=true is expected to use the defaults) and never
+    blocks startup -- a misconfigured secret shouldn't crash-loop a
+    deployment -- but it must be impossible to miss in production logs."""
+    if not USE_MOCK_DB:
+        if JWT_SECRET == "change_this_secret_in_production":
+            logger.warning(
+                "SECURITY: JWT_SECRET is still the hardcoded default. Set a real, "
+                "random JWT_SECRET in this environment's variables -- every token "
+                "issued right now can be forged by anyone who reads the source."
+            )
+        if ADMIN_PASSWORD == "Roskyro@123":
+            logger.warning(
+                "SECURITY: ADMIN_PASSWORD is still the hardcoded demo default "
+                "(Roskyro@123). Set a real ADMIN_PASSWORD in this environment's "
+                "variables -- the roskyro_admin super-admin account is currently "
+                "using a publicly-known password."
+            )
 
 
 @app.on_event("startup")

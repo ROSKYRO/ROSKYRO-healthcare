@@ -99,7 +99,13 @@ _INDEX_PLAN = [
     (booking_settings, ["org_id"]),
     (patients, [[("org_id", 1), ("updated_at", -1)], "name", "phone"]),
     (queue_entries, [[("org_id", 1), ("checked_in_at", 1)]]),
-    (patient_followups, [[("org_id", 1), ("patient_name", 1)]]),
+    # (org_id, patient_name) covers patients.py's per-patient lookup.
+    # (org_id, status, due_date) added for followups.py's list endpoint --
+    # it filters by org_id (+ optional status) and sorts by due_date, but
+    # had no index covering that sort, so Mongo had to in-memory-sort every
+    # one of that org's follow-up documents before slicing to 300 for any
+    # business with a large follow-up history.
+    (patient_followups, [[("org_id", 1), ("patient_name", 1)], [("org_id", 1), ("status", 1), ("due_date", 1)]]),
     (invoices, [[("org_id", 1), ("status", 1)], "patient_name"]),
     # "status" added for the platform-wide (no org_id filter) WhatsApp
     # Queue view -- see routers/whatsapp.py's GET /queue.
