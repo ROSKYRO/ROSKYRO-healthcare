@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import clsx from 'clsx';
 import api from '../lib/api';
-import { PageLoading } from '../components/ui';
+import { PageLoading, Button } from '../components/ui';
 import { PublicHeader, PublicFooter } from '../components/PublicNav';
 
 const PILLAR_STYLE = {
@@ -91,32 +92,74 @@ function PillarSection({ plan, reverse }) {
   );
 }
 
-export default function Services() {
-  const [plans, setPlans] = useState(null);
+// Same service catalog, same pricing, two audiences -- a business tab and
+// a partner tab (see Pricing.jsx for the full pricing-page toggle; mirrored
+// here more lightly since this page's focus is what each service includes,
+// not the checkout flow).
+const AUDIENCES = [
+  { key: 'business', label: 'For Businesses', endpoint: '/plans' },
+  { key: 'partner', label: 'For Partners', endpoint: '/partner-plans' },
+];
 
-  useEffect(() => {
-    api.get('/plans').then((res) => setPlans(res.data.plans.filter((p) => !p.is_bundle).sort((a, b) => a.sort_order - b.sort_order)));
-  }, []);
+export default function Services() {
+  const [audience, setAudience] = useState('business');
+  const [plansByAudience, setPlansByAudience] = useState({});
+  const [error, setError] = useState('');
+  const plans = plansByAudience[audience];
+
+  const load = (key) => {
+    const a = AUDIENCES.find((x) => x.key === key);
+    setError('');
+    api.get(a.endpoint).then((res) => setPlansByAudience((prev) => ({
+      ...prev, [key]: res.data.plans.filter((p) => !p.is_bundle && !p.is_addon).sort((x, y) => x.sort_order - y.sort_order),
+    }))).catch(() => {
+      setError('Could not load services. Please try again.');
+    });
+  };
+
+  useEffect(() => { if (!plansByAudience[audience]) load(audience); }, [audience]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen bg-gray-50">
       <PublicHeader />
 
-      <section className="max-w-3xl mx-auto px-6 pt-8 pb-10 text-center">
+      <section className="max-w-3xl mx-auto px-6 pt-8 pb-8 text-center">
         <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-brand-50 text-brand-700 rounded-full px-3 py-1 mb-5">
           What ROSKYRO Actually Does
         </p>
         <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 tracking-tight">
-          Three services. One healthcare business, fully covered.
+          Three services. Two ways to work with ROSKYRO.
         </h1>
         <p className="mt-4 text-gray-500">
           Get more patients, run your day-to-day without the chaos, and build a trusted network of partners —
-          each is its own subscription, so you only pay for what you actually need.
+          as a healthcare business, or as a Networking Marketing partner. Each is its own subscription, so you
+          only pay for what you actually need.
         </p>
       </section>
 
+      <div className="flex items-center justify-center gap-2 mb-8">
+        {AUDIENCES.map((a) => (
+          <button
+            key={a.key}
+            type="button"
+            onClick={() => setAudience(a.key)}
+            className={clsx(
+              'px-5 py-2 rounded-full text-sm font-semibold border transition',
+              audience === a.key ? 'bg-brand-600 border-brand-600 text-white' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+            )}
+          >
+            {a.label}
+          </button>
+        ))}
+      </div>
+
       <section className="max-w-5xl mx-auto px-6 pb-8">
-        {!plans ? <PageLoading /> : (
+        {error && !plans ? (
+          <div className="text-center py-16">
+            <p className="text-sm text-rose-600">{error}</p>
+            <Button size="sm" variant="secondary" className="mt-4" onClick={() => load(audience)}>Retry</Button>
+          </div>
+        ) : !plans ? <PageLoading /> : (
           <div className="divide-y divide-gray-100">
             {plans.map((plan, i) => (
               <PillarSection key={plan.code} plan={plan} reverse={i % 2 === 1} />

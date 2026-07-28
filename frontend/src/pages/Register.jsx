@@ -14,10 +14,20 @@ const BUSINESS_TYPES = [
   ['eye_hospital', 'Eye Hospital'],
 ];
 
+// Size/scale classification -- separate from "Business type" above (which
+// is the specialty). Informational only: shown on your business profile,
+// never affects pricing (pricing only ever differs between the Business
+// vs Partner side, not between these three).
+export const BUSINESS_CATEGORIES = [
+  ['solo_doctor', 'Solo Doctor'],
+  ['clinic', 'Clinic'],
+  ['hospital', 'Hospital (All Category)'],
+];
+
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ orgName: '', businessType: 'clinic', city: '', ownerName: '', email: '', phone: '', password: '' });
+  const [form, setForm] = useState({ orgName: '', businessType: 'clinic', businessCategory: 'clinic', city: '', ownerName: '', email: '', phone: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -57,8 +67,11 @@ export default function Register() {
             <Select label="Business type" value={form.businessType} onChange={set('businessType')}>
               {BUSINESS_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
-            <Input label="City" value={form.city} onChange={set('city')} placeholder="Pune" />
+            <Select label="Business category" value={form.businessCategory} onChange={set('businessCategory')}>
+              {BUSINESS_CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </Select>
           </div>
+          <Input label="City" value={form.city} onChange={set('city')} placeholder="Pune" />
           <Input label="Your name" required value={form.ownerName} onChange={set('ownerName')} placeholder="Dr. Anjali Deshmukh" />
           <Input label="Email" type="email" required value={form.email} onChange={set('email')} />
           <Input
