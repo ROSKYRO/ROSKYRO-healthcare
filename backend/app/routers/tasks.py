@@ -52,16 +52,39 @@ async def team_roster():
 
 @router.get("/summary")
 async def tasks_summary(role: str | None = None):
+    # Fixed: same unbounded-fetch-then-tally-in-Python pattern as
+    # list_tasks above -- this pulled every matching task (again, no
+    # collection-level bound) just to count them by status. A per-status
+    # count + overdue-count is exactly what MongoDB's $group/$sum are for;
+    # now Mongo does the counting and only 1 row per distinct status
+    # (a handful) ever crosses back into Python.
     filt = {"assigned_role": role} if role else {}
-    rows = await tasks.find(filt).to_list(None)
-    by_status: dict = {}
-    for t in rows:
-        s = t["status"]
-        entry = by_status.setdefault(s, {"status": s, "count": 0, "overdue_count": 0})
-        entry["count"] += 1
-        if t.get("sla_due_at") and as_aware(t["sla_due_at"]) < now() and s != "done":
-            entry["overdue_count"] += 1
-    return {"summary": list(by_status.values())}
+    # Naive, not aware -- see as_aware()'s docstring in app/utils/ids.py:
+    # Mongo (and mongomock) round-trip stored datetimes as naive even
+    # though they were inserted timezone-aware, and mongomock's aggregation
+    # evaluator compares Python datetime objects directly (unlike a real
+    # server, which compares BSON dates, not Python objects), so an aware
+    # literal here raises "can't compare offset-naive and offset-aware
+    # datetimes" the moment $lt actually evaluates it against a stored
+    # sla_due_at.
+    right_now = now().replace(tzinfo=None)
+    grouped = await tasks.aggregate([
+        {"$match": filt},
+        {"$group": {
+            "_id": "$status",
+            "count": {"$sum": 1},
+            "overdue_count": {"$sum": {"$cond": [
+                {"$and": [
+                    {"$ne": ["$status", "done"]},
+                    {"$ne": ["$sla_due_at", None]},
+                    {"$lt": ["$sla_due_at", right_now]},
+                ]},
+                1, 0,
+            ]}},
+        }},
+    ]).to_list(None)
+    summary = [{"status": g["_id"], "count": g["count"], "overdue_count": g["overdue_count"]} for g in grouped]
+    return {"summary": summary}
 
 
 @router.get("")
@@ -83,12 +106,39 @@ async def list_tasks(
     if priority:
         filt["priority"] = priority
 
-    rows = await tasks.find(filt).to_list(None)
-
-    def sort_key(t):
-        return (t["status"] == "done", t.get("priority") != "urgent", as_aware(t.get("sla_due_at")) or now() + timedelta(days=36500))
-    rows.sort(key=sort_key)
-    rows = rows[:300]
+    # Fixed: this used to be `tasks.find(filt).to_list(None)` -- pulling
+    # EVERY matching task (platform-wide across every business/partner
+    # verification/content/SEO/CRM/support task ever created, with no
+    # collection-level bound) into app memory, then sorting all of it in
+    # Python, and only THEN slicing to 300. Exactly the "site used to be
+    # fast, now it's slow" pattern flagged in db_indexes.py -- this
+    # endpoint's cost used to grow with the platform's entire task
+    # history, not with what's actually shown. Replaced with an
+    # aggregation pipeline that computes the same three-key sort (open
+    # before done, urgent before not, earliest SLA due date first) via
+    # $addFields + $sort, then $limit(300) at the DB level -- Mongo only
+    # ever has to materialize the 300 rows this endpoint actually returns.
+    # Naive, not aware -- same reason as tasks_summary's right_now above.
+    far_future = (now() + timedelta(days=36500)).replace(tzinfo=None)
+    rows = await tasks.aggregate([
+        {"$match": filt},
+        {"$addFields": {
+            "_is_done": {"$eq": ["$status", "done"]},
+            "_not_urgent": {"$ne": ["$priority", "urgent"]},
+            "_sla_sort": {"$ifNull": ["$sla_due_at", far_future]},
+        }},
+        {"$sort": {"_is_done": 1, "_not_urgent": 1, "_sla_sort": 1}},
+        {"$limit": 300},
+        # NOTE: would ideally end with a $unset of the three sort-helper
+        # fields here (they're internal to this query, not part of a
+        # task's real shape) -- mongomock doesn't implement $unset in
+        # aggregation pipelines (raises NotImplementedError), so instead
+        # they're stripped in Python just below, right after the fetch.
+    ]).to_list(None)
+    for r in rows:
+        r.pop("_is_done", None)
+        r.pop("_not_urgent", None)
+        r.pop("_sla_sort", None)
 
     # Batch-fetch org + assigned-user ONCE each via $in, instead of 2
     # find_one calls per task row -- this used to be a 1 + 2*N query pattern

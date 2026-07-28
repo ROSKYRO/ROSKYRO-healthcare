@@ -420,10 +420,18 @@ async def verify_partner(partner_id: str, body: VerifyBody, current_user: dict =
         {"$set": {"status": "done", "completed_at": now()}},
     )
 
-    owner = await users.find_one({"org_id": updated["org_id"], "role": "owner"})
-    if owner:
+    # Bug fix: this queried role="owner", but "owner" only exists on
+    # CUSTOMER (business) org users -- see auth.py's register/onboarding,
+    # which only ever assigns "owner" to a business signup. A partner
+    # org's admin user is always seeded/created with role="partner_admin"
+    # (see partner_plans.py:206 and referrals.py:360,549 for the same
+    # lookup done correctly elsewhere) so this find_one always returned
+    # None and the "your partner application was verified/needs changes"
+    # notification silently never reached anyone, for any partner, ever.
+    partner_admin_user = await users.find_one({"org_id": updated["org_id"], "role": "partner_admin"})
+    if partner_admin_user:
         await notify(
-            owner["_id"], "partner_verification_decision",
+            partner_admin_user["_id"], "partner_verification_decision",
             "Your partner profile is verified" if body.decision == "verified" else "Your partner application needs changes",
             body.note or ("You are now a verified partner in the ROSKYRO network." if body.decision == "verified" else "Please review and resubmit your partner details."),
             "partner", partner_id,
