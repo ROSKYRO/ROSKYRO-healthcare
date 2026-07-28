@@ -148,6 +148,18 @@ _INDEX_PLAN = [
 #     active one -- a plain (non-partial) unique index here would reject
 #     the second partnership ever set for a given category, not just a
 #     genuine concurrent duplicate.
+#   - marketing_payouts: (org_id, period) -- create_marketing_payout
+#     (settlements.py) checks "does a payout for this org+period already
+#     exist" then inserts one; two concurrent "Create Payout" calls for the
+#     same business/period would otherwise both pass that check and both
+#     insert, letting ROSKYRO generate (and pay out) the same collected
+#     Marketing Fees twice for one business/period. This is a genuine
+#     COMPOUND unique index (a real (field, direction) list, not two
+#     separate single-field strings), so it does NOT collide with the
+#     existing plain single-field "org_id" and "period" indexes already in
+#     _INDEX_PLAN above -- their auto-generated names differ from this
+#     compound index's name, unlike the subscription_renewals gotcha this
+#     file's ensure_indexes() docstring warns about.
 # NOTE: if unique index creation itself ever fails (e.g. pre-existing
 # duplicate rows in an already-corrupted real database), this same
 # try/except swallows that failure silently too -- the app still boots,
@@ -158,6 +170,7 @@ _UNIQUE_INDEX_PLAN = [
     (subscription_renewals, [("subscription_id", 1), ("period", 1)], {}),
     (settlements, [("referral_id", 1)], {}),
     (partnerships, [("org_id", 1), ("category_id", 1)], {"partialFilterExpression": {"status": "active"}}),
+    (marketing_payouts, [("org_id", 1), ("period", 1)], {}),
 ]
 
 
