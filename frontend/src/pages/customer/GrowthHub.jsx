@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../lib/api';
 import UpgradePrompt from '../../components/UpgradePrompt';
@@ -10,18 +10,35 @@ export default function GrowthHub() {
   const [dash, setDash] = useState(null);
   const [approvals, setApprovals] = useState(null);
   const [blocked, setBlocked] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setError('');
     Promise.all([api.get('/dashboard/customer'), api.get('/approvals')])
       .then(([d, a]) => {
         if (!d.data.activePillars?.includes('grow')) { setBlocked(true); return; }
         setDash(d.data);
         setApprovals(a.data.approvals.filter((x) => CONTENT_TYPES.includes(x.approval_type)));
       })
-      .catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+      .catch((err) => {
+        if (err?.response?.status === 402) setBlocked(true);
+        else setError('Could not load the Growth Hub. Please try again.');
+      });
   }, []);
 
+  useEffect(load, [load]);
+
   if (blocked) return <UpgradePrompt pillar="grow" />;
+
+  if (error && !dash) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!dash) return <PageLoading />;
 
   const breakdown = dash.visibilityScore?.breakdown || {};

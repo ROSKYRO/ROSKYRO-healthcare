@@ -11,9 +11,16 @@ export default function Queue() {
   const [blocked, setBlocked] = useState(false);
   const [patientName, setPatientName] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+  const [checkInError, setCheckInError] = useState('');
+  const [checkingIn, setCheckingIn] = useState(false);
 
   const load = useCallback(() => {
-    api.get('/queue').then((res) => setQueue(res.data.queue)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+    setError('');
+    api.get('/queue').then((res) => setQueue(res.data.queue)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else setError('Could not load the queue. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -21,18 +28,29 @@ export default function Queue() {
   async function checkIn(e) {
     e.preventDefault();
     if (!patientName.trim()) return;
-    await api.post('/queue', { patientName });
-    setPatientName('');
-    load();
+    setCheckingIn(true);
+    setCheckInError('');
+    try {
+      await api.post('/queue', { patientName });
+      setPatientName('');
+      load();
+    } catch (err) {
+      setCheckInError(err?.response?.data?.error || 'Could not check in this patient. Please try again.');
+    } finally {
+      setCheckingIn(false);
+    }
   }
 
   async function advance(entry) {
     const next = STATUS_FLOW[entry.status];
     if (!next) return;
     setBusyId(entry.id);
+    setError('');
     try {
       await api.patch(`/queue/${entry.id}`, { status: next });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not update this queue entry. Please try again.');
     } finally {
       setBusyId(null);
     }
@@ -40,15 +58,28 @@ export default function Queue() {
 
   async function noShow(entry) {
     setBusyId(entry.id);
+    setError('');
     try {
       await api.patch(`/queue/${entry.id}`, { status: 'no_show' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not update this queue entry. Please try again.');
     } finally {
       setBusyId(null);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
+
+  if (error && !queue) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!queue) return <PageLoading />;
 
   const active = queue.filter((q) => ['waiting', 'in_consultation'].includes(q.status));
@@ -64,9 +95,12 @@ export default function Queue() {
       <Card className="p-5">
         <form onSubmit={checkIn} className="flex gap-3">
           <Input placeholder="Patient name to check in…" value={patientName} onChange={(e) => setPatientName(e.target.value)} className="flex-1" />
-          <Button type="submit">Check In</Button>
+          <Button type="submit" disabled={checkingIn}>{checkingIn ? 'Checking in…' : 'Check In'}</Button>
         </form>
+        {checkInError && <p className="text-sm text-rose-600 mt-2">{checkInError}</p>}
       </Card>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <Card>
         <div className="px-5 pt-5"><h3 className="text-base font-semibold text-gray-900">Live Queue</h3></div>

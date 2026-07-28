@@ -9,9 +9,15 @@ export default function Whatsapp() {
   const [templates, setTemplates] = useState([]);
   const [form, setForm] = useState({ patientName: '', patientPhone: '', templateName: '' });
   const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [sendError, setSendError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/whatsapp').then((res) => setMessages(res.data.messages)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+    setError('');
+    api.get('/whatsapp').then((res) => setMessages(res.data.messages)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else setError('Could not load messages. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -22,16 +28,29 @@ export default function Whatsapp() {
   async function send(e) {
     e.preventDefault();
     setSending(true);
+    setSendError('');
     try {
       await api.post('/whatsapp/send', form);
       setForm({ patientName: '', patientPhone: '', templateName: '' });
       load();
+    } catch (err) {
+      setSendError(err?.response?.data?.error || 'Could not send this message. Please try again.');
     } finally {
       setSending(false);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
+
+  if (error && !messages) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!messages) return <PageLoading />;
 
   const selectedTemplate = templates.find((t) => t.key === form.templateName);
@@ -52,6 +71,7 @@ export default function Whatsapp() {
             {templates.map((t) => <option key={t.key} value={t.key}>{t.key.replace(/_/g, ' ')}</option>)}
           </Select>
           {selectedTemplate && <p className="col-span-3 text-xs text-gray-400 -mt-2">Preview: "{selectedTemplate.preview}"</p>}
+          {sendError && <p className="col-span-3 text-sm text-rose-600">{sendError}</p>}
           <div className="col-span-3"><Button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send Message'}</Button></div>
         </form>
       </Card>

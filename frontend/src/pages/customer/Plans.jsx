@@ -157,9 +157,12 @@ export default function Plans() {
 
   async function markRenewalPaid(renewal) {
     setMarkingRenewalId(renewal.id);
+    setError('');
     try {
       await api.post(`/subscription-renewals/${renewal.id}/mark-paid`, {});
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this renewal as paid. Please try again.');
     } finally {
       setMarkingRenewalId(null);
     }
@@ -167,6 +170,7 @@ export default function Plans() {
 
   async function downloadRenewalInvoice(renewal) {
     setDownloadingRenewalId(renewal.id);
+    setError('');
     try {
       const res = await api.get(`/subscription-renewals/${renewal.id}/invoice`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
@@ -177,6 +181,8 @@ export default function Plans() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Could not download this invoice. Please try again.');
     } finally {
       setDownloadingRenewalId(null);
     }

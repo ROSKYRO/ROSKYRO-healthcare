@@ -9,15 +9,20 @@ function PayoutAccountSettings({ org, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const [error, setError] = useState('');
+
   async function save(e) {
     e.preventDefault();
     setBusy(true);
     setSaved(false);
+    setError('');
     try {
       await api.patch(`/orgs/${org.id}`, { marketingPayoutUpiId: upiId.trim() });
       setSaved(true);
       onSaved();
       setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not save the payout UPI ID. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -41,6 +46,7 @@ function PayoutAccountSettings({ org, onSaved }) {
           <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save Payout UPI'}</Button>
           {saved && <span className="text-sm text-emerald-600 font-medium">Saved ✓</span>}
         </div>
+        {error && <p className="text-sm text-rose-600">{error}</p>}
         {!org.marketing_payout_upi_id && (
           <p className="text-xs text-rose-500">
             Abhi tak koi payout UPI ID set nahi hai — jab tak set nahi karoge, ROSKYRO aapko Marketing Fee Payout
@@ -59,11 +65,13 @@ export default function CustomerSettlements() {
   const [org, setOrg] = useState(null);
   const [blocked, setBlocked] = useState(false);
   const [downloadingId, setDownloadingId] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
     // Note: only your own incoming Marketing Fee Payout is shown here.
     // Per-referral partner fee amounts (what a partner pays ROSKYRO) are
     // internal/partner-facing only and aren't fetched or shown on this page.
+    setError('');
     Promise.all([
       api.get('/settlements/marketing-payouts'),
       api.get('/settlements/marketing-fee-rate'),
@@ -74,13 +82,17 @@ export default function CustomerSettlements() {
         setRate(r.data.percentage);
         setOrg(o.data.organization);
       })
-      .catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+      .catch((err) => {
+        if (err?.response?.status === 402) setBlocked(true);
+        else setError('Could not load Marketing Fee Payouts. Please try again.');
+      });
   }, [user.orgId]);
 
   useEffect(load, [load]);
 
   async function downloadInvoice(payout) {
     setDownloadingId(payout.id);
+    setError('');
     try {
       const res = await api.get(`/settlements/marketing-payouts/${payout.id}/invoice`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
@@ -91,12 +103,24 @@ export default function CustomerSettlements() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Could not download this invoice. Please try again.');
     } finally {
       setDownloadingId(null);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="connect" />;
+
+  if (error && (!payouts || rate == null || !org)) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!payouts || rate == null || !org) return <PageLoading />;
 
   const totalReceived = payouts.filter((p) => p.status === 'paid').reduce((sum, p) => sum + Number(p.payout_amount), 0);
@@ -124,6 +148,8 @@ export default function CustomerSettlements() {
           <p className="text-2xl font-bold text-gray-900">{formatCurrency(pendingPayout)}</p>
         </Card>
       </div>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <PayoutAccountSettings org={org} onSaved={load} />
 

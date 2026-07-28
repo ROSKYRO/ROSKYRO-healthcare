@@ -1,19 +1,36 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../lib/api';
 import UpgradePrompt from '../../components/UpgradePrompt';
-import { Card, CardHeader, Badge, PageLoading, EmptyState, formatDate, formatDateTime, formatCurrency } from '../../components/ui';
+import { Card, CardHeader, Badge, Button, PageLoading, EmptyState, formatDate, formatDateTime, formatCurrency } from '../../components/ui';
 
 export default function PatientDetail() {
   const { id } = useParams();
   const [detail, setDetail] = useState(null);
   const [blocked, setBlocked] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get(`/patients/${id}`).then((res) => setDetail(res.data)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+  const load = useCallback(() => {
+    setError('');
+    api.get(`/patients/${id}`).then((res) => setDetail(res.data)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else setError('Could not load this patient. Please try again.');
+    });
   }, [id]);
 
+  useEffect(load, [load]);
+
   if (blocked) return <UpgradePrompt pillar="manage" />;
+
+  if (error && !detail) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!detail) return <PageLoading />;
   const { patient, appointments, followups, invoices, whatsapp } = detail;
 

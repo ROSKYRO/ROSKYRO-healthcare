@@ -11,19 +11,34 @@ export default function Appointments() {
   const [pdfDate, setPdfDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [pdfBusy, setPdfBusy] = useState(false);
   const [pdfError, setPdfError] = useState('');
+  const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   function load() {
-    api.get('/appointments').then((res) => setAppointments(res.data.appointments)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+    setError('');
+    api.get('/appointments').then((res) => setAppointments(res.data.appointments)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else setError('Could not load appointments. Please try again.');
+    });
   }
 
   useEffect(load, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
-    await api.post('/appointments', { ...form, revenueAmount: form.revenueAmount ? Number(form.revenueAmount) : 0 });
-    setShowForm(false);
-    setForm({ patientName: '', doctorName: '', appointmentDate: '', appointmentTime: '', revenueAmount: '', isNewPatient: false });
-    load();
+    setFormError('');
+    setSaving(true);
+    try {
+      await api.post('/appointments', { ...form, revenueAmount: form.revenueAmount ? Number(form.revenueAmount) : 0 });
+      setShowForm(false);
+      setForm({ patientName: '', doctorName: '', appointmentDate: '', appointmentTime: '', revenueAmount: '', isNewPatient: false });
+      load();
+    } catch (err) {
+      setFormError(err?.response?.data?.error || 'Could not save this appointment. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function downloadDailyPdf() {
@@ -47,6 +62,16 @@ export default function Appointments() {
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
+
+  if (error && !appointments) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!appointments) return <PageLoading />;
 
   return (
@@ -82,7 +107,8 @@ export default function Appointments() {
               <input type="checkbox" checked={form.isNewPatient} onChange={(e) => setForm((f) => ({ ...f, isNewPatient: e.target.checked }))} />
               New patient
             </label>
-            <div className="col-span-2"><Button type="submit">Save Appointment</Button></div>
+            {formError && <p className="text-sm text-rose-600 col-span-2">{formError}</p>}
+            <div className="col-span-2"><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Appointment'}</Button></div>
           </form>
         </Card>
       )}

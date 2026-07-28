@@ -12,9 +12,16 @@ export default function Billing() {
   const [form, setForm] = useState({ patientName: '', patientPhone: '', dueDate: '' });
   const [items, setItems] = useState([{ ...emptyItem }]);
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
-    api.get('/billing').then((res) => setInvoices(res.data.invoices)).catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+    setError('');
+    api.get('/billing').then((res) => setInvoices(res.data.invoices)).catch((err) => {
+      if (err?.response?.status === 402) setBlocked(true);
+      else setError('Could not load invoices. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -29,24 +36,45 @@ export default function Billing() {
     e.preventDefault();
     const lineItems = items.filter((it) => it.description && it.unitPrice).map((it) => ({ ...it, quantity: Number(it.quantity) || 1, unitPrice: Number(it.unitPrice) }));
     if (!lineItems.length) return;
-    await api.post('/billing', { ...form, lineItems });
-    setShowForm(false);
-    setForm({ patientName: '', patientPhone: '', dueDate: '' });
-    setItems([{ ...emptyItem }]);
-    load();
+    setFormError('');
+    setSaving(true);
+    try {
+      await api.post('/billing', { ...form, lineItems });
+      setShowForm(false);
+      setForm({ patientName: '', patientPhone: '', dueDate: '' });
+      setItems([{ ...emptyItem }]);
+      load();
+    } catch (err) {
+      setFormError(err?.response?.data?.error || 'Could not create this invoice. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function markPaid(id) {
     setBusyId(id);
+    setError('');
     try {
       await api.patch(`/billing/${id}`, { status: 'paid' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this invoice paid. Please try again.');
     } finally {
       setBusyId(null);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
+
+  if (error && !invoices) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!invoices) return <PageLoading />;
 
   return (
@@ -85,10 +113,13 @@ export default function Billing() {
               </div>
             </div>
 
-            <Button type="submit">Create Invoice</Button>
+            {formError && <p className="text-sm text-rose-600">{formError}</p>}
+            <Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Create Invoice'}</Button>
           </form>
         </Card>
       )}
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <Card>
         <Table

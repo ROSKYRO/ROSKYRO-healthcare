@@ -18,15 +18,18 @@ export default function Approvals() {
 
   async function decide(id, decision) {
     setBusyId(id);
+    setError('');
     try {
       await api.post(`/approvals/${id}/decision`, { decision });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not record this decision. Please try again.');
     } finally {
       setBusyId(null);
     }
   }
 
-  if (error) {
+  if (error && !approvals) {
     return (
       <div className="text-center py-16">
         <p className="text-sm text-rose-600">{error}</p>
@@ -44,6 +47,8 @@ export default function Approvals() {
           Everything here is AI-drafted and human-reviewed by your ROSKYRO team. Nothing publishes without your go-ahead.
         </p>
       </div>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       {approvals.length === 0 ? (
         <EmptyState title="Nothing to approve right now." subtitle="You're all caught up." />
