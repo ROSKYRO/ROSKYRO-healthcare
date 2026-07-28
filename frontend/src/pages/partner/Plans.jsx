@@ -184,16 +184,6 @@ export default function PartnerPlans() {
         </p>
       </Card>
 
-      {!mine.activePillars.includes('manage') && (
-        <Card className="p-4 bg-blue-50 border-blue-100 flex items-center gap-3">
-          <span className="text-lg">{'\u{1F381}'}</span>
-          <p className="text-sm text-gray-700">
-            <span className="font-semibold">Bonus:</span> activate GROW + Networking Marketing (CONNECT) together and
-            MANAGE is unlocked free — no separate subscription needed.
-          </p>
-        </Card>
-      )}
-
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <PricingCards
