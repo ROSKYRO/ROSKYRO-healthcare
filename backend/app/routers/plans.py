@@ -3,9 +3,18 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.db import plans as plans_collection, organization_subscriptions, organizations, users
 from app.auth import get_current_user, require_internal, require_roles
 from app.utils.plans import get_active_pillars, next_renewal_date
+from app.utils.bundle_bonus import apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons
 from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
+
+# Business rule: activate MANAGE + GROW together -> Networking Marketing
+# (CONNECT) is granted for free as a bonus earning service. See
+# app/utils/bundle_bonus.py for the shared implementation (the partner
+# audience has the mirror-image rule: GROW + CONNECT -> MANAGE free).
+BUSINESS_BONUS_TRIGGER_A = "manage"
+BUSINESS_BONUS_TRIGGER_B = "grow"
+BUSINESS_BONUS_CODE = "connect"
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 
@@ -167,11 +176,26 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Unknown plan.")
     price_at_purchase = plan.get("yearly_price") if billing_cycle == "yearly" else plan.get("monthly_price")
 
+    # Add-on plans (e.g. "reels" -- Reel Making) only make sense alongside
+    # the pillar they extend. requires_pillar is set on the plan doc itself
+    # so this check works for ANY future add-on, not just reels.
+    if plan.get("is_addon") and plan.get("requires_pillar"):
+        active_now = await get_active_pillars(target_org_id)
+        if plan["requires_pillar"] not in active_now:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{plan['requires_pillar'].upper()} must be active before adding {plan['name']}.",
+            )
+
     if plan.get("is_bundle"):
         # If subscribing to the bundle, cancel any individual pillar
         # subscriptions they're replacing (avoid double-billing in the demo).
+        # Add-ons (e.g. a paid-for reel-making subscription) are NOT swept
+        # up here -- the bundle already grants GROW, so an active add-on
+        # that requires GROW stays valid and shouldn't be silently cancelled.
+        addon_codes = [p["_id"] async for p in plans_collection.find({"is_addon": True})]
         await organization_subscriptions.update_many(
-            {"org_id": target_org_id, "status": "active", "plan_code": {"$ne": "complete"}},
+            {"org_id": target_org_id, "status": "active", "plan_code": {"$nin": ["complete"] + addon_codes}},
             {"$set": {"status": "cancelled", "cancelled_at": now()}},
         )
     else:
@@ -189,13 +213,26 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
     }
     await organization_subscriptions.insert_one(doc)
 
+    # MANAGE + GROW together -> Networking Marketing (CONNECT) free, as a
+    # bonus earning service. Only fires once both trigger pillars are
+    # actually active and CONNECT isn't already active/paid.
+    bonus_doc = await apply_bundle_bonus(
+        organization_subscriptions, target_org_id,
+        BUSINESS_BONUS_TRIGGER_A, BUSINESS_BONUS_TRIGGER_B, BUSINESS_BONUS_CODE,
+        current_user["id"], get_active_pillars,
+    )
+
     owner = await users.find_one({"org_id": target_org_id, "role": "owner"})
     if owner and owner["_id"] != current_user["id"]:
         amount_label = f"₹{price_at_purchase}/year" if billing_cycle == "yearly" else f"₹{price_at_purchase}/month"
         await notify(owner["_id"], "plan_activated", f"{plan['name']} is now active", amount_label, "plan", None)
+    if bonus_doc and owner:
+        await notify(owner["_id"], "plan_activated", "Networking Marketing is now active — free bonus", "₹0/month (MANAGE + GROW bonus)", "plan", None)
 
     await log_audit(current_user["id"], "plan.subscribed", "organization", target_org_id, {"planCode": plan_code, "billingCycle": billing_cycle})
-    return {"subscription": to_out(doc)}
+    if bonus_doc:
+        await log_audit(current_user["id"], "plan.bundle_bonus_granted", "organization", target_org_id, {"planCode": BUSINESS_BONUS_CODE})
+    return {"subscription": to_out(doc), "bonusGranted": to_out(bonus_doc) if bonus_doc else None}
 
 
 @router.post("/cancel")
@@ -212,4 +249,17 @@ async def cancel(body: dict, current_user: dict = Depends(get_current_user)):
     await organization_subscriptions.update_one({"_id": existing["_id"]}, {"$set": {"status": "cancelled", "cancelled_at": now()}})
     updated = await organization_subscriptions.find_one({"_id": existing["_id"]})
     await log_audit(current_user["id"], "plan.cancelled", "organization", org_id, {"planCode": plan_code})
-    return {"subscription": to_out(updated)}
+
+    # If this cancellation broke the MANAGE+GROW pair, the free CONNECT
+    # bonus (if it was ever granted free) is no longer earned -- revoke it.
+    # A CONNECT subscription the business actually paid for is untouched.
+    revoked_bonus = await revoke_bundle_bonus_if_broken(
+        organization_subscriptions, org_id,
+        BUSINESS_BONUS_TRIGGER_A, BUSINESS_BONUS_TRIGGER_B, BUSINESS_BONUS_CODE,
+        get_active_pillars,
+    )
+    # Any add-on that required THIS specific pillar (e.g. "reels" requires
+    # GROW) no longer stands on its own -- cancel it too.
+    cascaded = await cascade_cancel_dependent_addons(organization_subscriptions, plans_collection, org_id, plan_code)
+
+    return {"subscription": to_out(updated), "bonusRevoked": revoked_bonus, "addonsCancelled": cascaded}

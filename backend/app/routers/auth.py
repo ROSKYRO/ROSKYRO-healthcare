@@ -12,6 +12,14 @@ from app.utils.phone import normalize_phone
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# The size/scale classification a business picks at signup -- deliberately
+# a SEPARATE field from business_type (which is the business's specialty:
+# clinic/dental/skin_clinic/etc, used to gate who can create referrals).
+# business_category is purely informational/segmentation (shown on the
+# business's own profile) and never affects pricing -- pricing only ever
+# differs between the business vs partner AUDIENCE, not between these 3.
+BUSINESS_CATEGORIES = {"solo_doctor", "clinic", "hospital"}
+
 
 def public_user(user: dict) -> dict:
     """Direct port of auth.js's publicUser()."""
@@ -25,6 +33,7 @@ def public_user(user: dict) -> dict:
         "avatarUrl": user.get("avatar_url"),
         "orgName": user.get("org_name"),
         "businessType": user.get("business_type"),
+        "businessCategory": user.get("business_category"),
         "isPartner": user.get("is_partner"),
         "subscriptionPlan": user.get("subscription_plan"),
         "appShell": app_shell_for(user.get("role")),
@@ -42,6 +51,7 @@ class LoginBody(BaseModel):
 class RegisterBody(BaseModel):
     orgName: str
     businessType: str | None = None
+    businessCategory: str | None = None
     city: str | None = None
     ownerName: str
     email: str
@@ -94,6 +104,7 @@ async def login(body: LoginBody):
         "avatar_url": user.get("avatar_url"),
         "org_name": org.get("name") if org else None,
         "business_type": org.get("business_type") if org else None,
+        "business_category": org.get("business_category") if org else None,
         "is_partner": org.get("is_partner") if org else None,
         "subscription_plan": org.get("subscription_plan") if org else None,
     }
@@ -122,11 +133,15 @@ async def register(body: RegisterBody):
     if existing_phone:
         raise HTTPException(status_code=409, detail="An account with this mobile number already exists.")
 
+    if body.businessCategory and body.businessCategory not in BUSINESS_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Unknown business category.")
+
     org_id = new_id()
     org_doc = {
         "_id": org_id,
         "name": body.orgName,
         "business_type": body.businessType or "clinic",
+        "business_category": body.businessCategory or "clinic",
         "city": body.city,
         "phone": body.phone,
         "email": body.email,
@@ -190,6 +205,7 @@ async def register(body: RegisterBody):
         "avatar_url": None,
         "org_name": org_doc["name"],
         "business_type": org_doc["business_type"],
+        "business_category": org_doc["business_category"],
         "is_partner": org_doc["is_partner"],
         "subscription_plan": org_doc["subscription_plan"],
     }
@@ -208,6 +224,7 @@ async def me(current_user: dict = Depends(get_current_user)):
         "avatar_url": current_user.get("avatar_url"),
         "org_name": current_user.get("orgName"),
         "business_type": current_user.get("businessType"),
+        "business_category": current_user.get("businessCategory"),
         "is_partner": current_user.get("isPartner"),
         "subscription_plan": current_user.get("subscriptionPlan"),
     }
