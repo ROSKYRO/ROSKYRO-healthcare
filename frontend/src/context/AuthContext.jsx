@@ -7,10 +7,15 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Business (customer) and partner accounts each have their own
+  // pillar-subscription catalog/endpoint (see routers/plans.py vs
+  // routers/partner_plans.py) -- pick the right one by appShell so both
+  // sides get a real activePillars/monthlyTotal on the user object.
   const loadPillars = useCallback(async (baseUser) => {
-    if (!baseUser || baseUser.appShell !== 'customer') return baseUser;
+    if (!baseUser || (baseUser.appShell !== 'customer' && baseUser.appShell !== 'partner')) return baseUser;
+    const endpoint = baseUser.appShell === 'partner' ? '/partner-plans/mine' : '/plans/mine';
     try {
-      const { data } = await api.get('/plans/mine');
+      const { data } = await api.get(endpoint);
       return { ...baseUser, activePillars: data.activePillars, monthlyTotal: data.monthlyTotal };
     } catch {
       return { ...baseUser, activePillars: [], monthlyTotal: 0 };
@@ -57,7 +62,8 @@ export function AuthProvider({ children }) {
 
   async function refreshPillars() {
     setUser((u) => u);
-    const { data } = await api.get('/plans/mine');
+    const endpoint = user?.appShell === 'partner' ? '/partner-plans/mine' : '/plans/mine';
+    const { data } = await api.get(endpoint);
     setUser((u) => (u ? { ...u, activePillars: data.activePillars, monthlyTotal: data.monthlyTotal } : u));
   }
 
