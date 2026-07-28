@@ -5,8 +5,7 @@ from app.auth import get_current_user, require_roles
 from app.utils.pillars import get_active_partner_pillars
 from app.utils.plans import next_renewal_date
 from app.utils.bundle_bonus import (
-    apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons,
-    find_active_bundle_covering_pillar,
+    cascade_cancel_dependent_addons, find_active_bundle_covering_pillar,
 )
 from app.utils.audit import log_audit
 from app.utils.notify import notify
@@ -15,19 +14,27 @@ from app.utils.ids import new_id, now, to_out, to_out_many
 router = APIRouter(prefix="/api/partner-plans", tags=["partner-plans"])
 
 # Partner-audience mirror of routers/plans.py -- same services (GROW /
-# MANAGE / Networking Marketing / a bundle, plus the "reels" add-on), but
-# its own pricing catalog (partner_plans/partner_subscriptions, kept
-# entirely separate from the business ones in plans/organization_subscriptions).
+# MANAGE / Networking Marketing / a bundle, plus the "reels" add-on), its
+# own subscriptions collection (partner_subscriptions, separate from the
+# business side's organization_subscriptions), but pricing is NOT separate
+# -- see plans.py's patch_plan(), which now keeps this catalog's
+# monthly_price/yearly_price in sync with the business catalog's, so the
+# two audiences always show identical prices for the same service.
 #
-# Partner rule: activate GROW + Networking Marketing (CONNECT) together ->
-# MANAGE is granted for free (the mirror image of the business rule, which
-# is MANAGE + GROW -> CONNECT free). See app/utils/bundle_bonus.py.
-PARTNER_BONUS_TRIGGER_A = "grow"
-PARTNER_BONUS_TRIGGER_B = "connect"
-PARTNER_BONUS_CODE = "manage"
+# Removed per explicit request: the "activate GROW + Networking Marketing
+# (CONNECT) together -> MANAGE granted free" bonus (the mirror image of
+# plans.py's business-side rule) is retired -- see plans.py's header
+# comment for the full reasoning (only stops NEW bonuses; any partner
+# already granted a free MANAGE subscription before this change keeps it).
 
+# NOTE: monthlyPrice/yearlyPrice deliberately excluded (removed per explicit
+# request) -- pricing is no longer independently editable on this catalog
+# at all. plans.py's patch_plan() is the single source of truth for pricing
+# and propagates monthly_price/yearly_price into this collection's matching
+# doc on every business-side price edit, so the two audiences can never
+# show different prices for the same service again.
 EDITABLE_PLAN_FIELDS_CAMEL = {
-    "name": "name", "tagline": "tagline", "monthlyPrice": "monthly_price", "yearlyPrice": "yearly_price",
+    "name": "name", "tagline": "tagline",
     "description": "description", "bestFor": "best_for", "customerPromise": "customer_promise",
     "features": "features", "badge": "badge",
 }
@@ -59,8 +66,13 @@ async def list_partner_plans():
 
 @router.patch("/{code}", dependencies=[Depends(require_roles("roskyro_admin"))])
 async def patch_partner_plan(code: str, body: dict, current_user: dict = Depends(get_current_user)):
-    """ROSKYRO super admin only -- same editing rules as PATCH /plans/{code},
-    just against the partner catalog."""
+    """ROSKYRO super admin only -- same editing rules as PATCH /plans/{code}
+    for copy/features, against the partner catalog. Pricing is NOT editable
+    here at all (see EDITABLE_PLAN_FIELDS_CAMEL's note above): even if a
+    caller sends monthlyPrice/yearlyPrice in the body, those keys are simply
+    not in EDITABLE_PLAN_FIELDS_CAMEL, so they're silently ignored here --
+    prices only ever change via plans.py's patch_plan(), which propagates
+    into this collection automatically."""
     updates = {}
     for camel, snake in EDITABLE_PLAN_FIELDS_CAMEL.items():
         if camel in body:
@@ -69,17 +81,6 @@ async def patch_partner_plan(code: str, body: dict, current_user: dict = Depends
             updates[snake] = body[snake]
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided.")
-    # Fixed: same gap as plans.py's patch_plan -- monthly_price/yearly_price
-    # were stored unvalidated, then crashed the first partner org's own
-    # GET /partner-plans/mine (my_partner_subscriptions, below) that did
-    # `float(price or 0)` on a subscription's price_at_purchase copied from
-    # a bad catalog value.
-    for price_field in ("monthly_price", "yearly_price"):
-        if price_field in updates and updates[price_field] is not None:
-            try:
-                updates[price_field] = float(updates[price_field])
-            except (TypeError, ValueError):
-                raise HTTPException(status_code=400, detail=f"{price_field} must be numeric.")
 
     await partner_plans_collection.update_one({"_id": code}, {"$set": updates})
     updated = await partner_plans_collection.find_one({"_id": code})
@@ -208,23 +209,13 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
     }
     await partner_subscriptions.insert_one(doc)
 
-    bonus_doc = await apply_bundle_bonus(
-        partner_subscriptions, org_id,
-        PARTNER_BONUS_TRIGGER_A, PARTNER_BONUS_TRIGGER_B, PARTNER_BONUS_CODE,
-        current_user["id"], get_active_partner_pillars,
-    )
-
     partner_admin = await users.find_one({"org_id": org_id, "role": "partner_admin"})
     if partner_admin and partner_admin["_id"] != current_user["id"]:
         amount_label = f"₹{price_at_purchase}/year" if billing_cycle == "yearly" else f"₹{price_at_purchase}/month"
         await notify(partner_admin["_id"], "plan_activated", f"{plan['name']} is now active", amount_label, "plan", None)
-    if bonus_doc and partner_admin:
-        await notify(partner_admin["_id"], "plan_activated", "MANAGE is now active — free bonus", "₹0/month (GROW + Networking Marketing bonus)", "plan", None)
 
     await log_audit(current_user["id"], "partner_plan.subscribed", "organization", org_id, {"planCode": plan_code, "billingCycle": billing_cycle})
-    if bonus_doc:
-        await log_audit(current_user["id"], "partner_plan.bundle_bonus_granted", "organization", org_id, {"planCode": PARTNER_BONUS_CODE})
-    return {"subscription": to_out(doc), "bonusGranted": to_out(bonus_doc) if bonus_doc else None}
+    return {"subscription": to_out(doc)}
 
 
 @router.post("/cancel")
@@ -241,11 +232,6 @@ async def cancel_partner(body: dict, current_user: dict = Depends(get_current_us
     updated = await partner_subscriptions.find_one({"_id": existing["_id"]})
     await log_audit(current_user["id"], "partner_plan.cancelled", "organization", org_id, {"planCode": plan_code})
 
-    revoked_bonus = await revoke_bundle_bonus_if_broken(
-        partner_subscriptions, org_id,
-        PARTNER_BONUS_TRIGGER_A, PARTNER_BONUS_TRIGGER_B, PARTNER_BONUS_CODE,
-        get_active_partner_pillars,
-    )
     cascaded = await cascade_cancel_dependent_addons(partner_subscriptions, partner_plans_collection, org_id, plan_code)
 
-    return {"subscription": to_out(updated), "bonusRevoked": revoked_bonus, "addonsCancelled": cascaded}
+    return {"subscription": to_out(updated), "addonsCancelled": cascaded}

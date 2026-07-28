@@ -1,23 +1,28 @@
 from fastapi import APIRouter, HTTPException, Depends
 
-from app.db import plans as plans_collection, organization_subscriptions, organizations, users
+from app.db import plans as plans_collection, organization_subscriptions, organizations, users, partner_plans as partner_plans_collection
 from app.auth import get_current_user, require_internal, require_roles
 from app.utils.plans import get_active_pillars, next_renewal_date
 from app.utils.bundle_bonus import (
-    apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons,
-    find_active_bundle_covering_pillar,
+    cascade_cancel_dependent_addons, find_active_bundle_covering_pillar,
 )
 from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
 
-# Business rule: activate MANAGE + GROW together -> Networking Marketing
-# (CONNECT) is granted for free as a bonus earning service. See
-# app/utils/bundle_bonus.py for the shared implementation (the partner
-# audience has the mirror-image rule: GROW + CONNECT -> MANAGE free).
-BUSINESS_BONUS_TRIGGER_A = "manage"
-BUSINESS_BONUS_TRIGGER_B = "grow"
-BUSINESS_BONUS_CODE = "connect"
+# Removed per explicit request: the "activate MANAGE + GROW together ->
+# Networking Marketing (CONNECT) granted free" bonus is retired -- every
+# pillar is now paid for individually, no auto-granted free pillar. This
+# ONLY stops NEW bonuses from being granted going forward; any business
+# that was already granted a free CONNECT subscription before this change
+# keeps it active (removing already-delivered free service from a live
+# customer with no notice would be a separate, real billing action, not a
+# code fix -- flagged separately, not done here). The mirror-image partner
+# rule (GROW + CONNECT -> MANAGE free) is removed the same way in
+# partner_plans.py. find_active_bundle_covering_pillar and
+# cascade_cancel_dependent_addons are UNRELATED features (the "ROSKYRO
+# Complete" bundle-plan double-billing guard, and the "reels" add-on
+# dependency cleanup) and are untouched.
 
 router = APIRouter(prefix="/api/plans", tags=["plans"])
 
@@ -54,7 +59,16 @@ async def list_plans():
 async def patch_plan(code: str, body: dict, current_user: dict = Depends(get_current_user)):
     """ROSKYRO super admin only: edit pricing & copy for a pillar or the
     bundle. Nothing else in the app can change plan pricing -- customers
-    only ever choose among what's already published here."""
+    only ever choose among what's already published here.
+
+    This business catalog is now the SINGLE SOURCE OF TRUTH for pricing
+    across both audiences: whenever monthly_price/yearly_price change here,
+    the change is propagated into the matching partner_plans doc (same
+    code) too, so the "For Partners" pricing tab can never drift from "For
+    Businesses" again -- see partner_plans.py's patch_partner_plan(), which
+    no longer accepts monthlyPrice/yearlyPrice at all (removed per explicit
+    request, since independent partner-side price edits were exactly what
+    caused the two catalogs to show different numbers)."""
     updates = {}
     for camel, snake in EDITABLE_PLAN_FIELDS_CAMEL.items():
         if camel in body:
@@ -73,17 +87,27 @@ async def patch_plan(code: str, body: dict, current_user: dict = Depends(get_cur
     # appointments.py/booking_settings.py in earlier rounds -- an
     # admin-side write with no numeric check breaking an unrelated,
     # customer-facing read path later.
+    price_updates = {}
     for price_field in ("monthly_price", "yearly_price"):
         if price_field in updates and updates[price_field] is not None:
             try:
                 updates[price_field] = float(updates[price_field])
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail=f"{price_field} must be numeric.")
+            price_updates[price_field] = updates[price_field]
 
     result = await plans_collection.update_one({"_id": code}, {"$set": updates})
     updated = await plans_collection.find_one({"_id": code})
     if not updated:
         raise HTTPException(status_code=404, detail="Unknown plan.")
+
+    # Permanent price sync (per explicit request): propagate into the
+    # partner-audience catalog's matching plan doc, if one exists for this
+    # code. A no-op (matched_count 0) for a business-only plan code that has
+    # no partner-side equivalent -- never raises, since this is a pure
+    # side-effect of the business catalog being canonical for pricing.
+    if price_updates:
+        await partner_plans_collection.update_one({"_id": code}, {"$set": price_updates})
 
     await log_audit(current_user["id"], "plan.updated", "plan", None, {"code": code, "fields": list(body.keys())})
     return {"plan": _plan_out(updated)}
@@ -258,26 +282,13 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
     }
     await organization_subscriptions.insert_one(doc)
 
-    # MANAGE + GROW together -> Networking Marketing (CONNECT) free, as a
-    # bonus earning service. Only fires once both trigger pillars are
-    # actually active and CONNECT isn't already active/paid.
-    bonus_doc = await apply_bundle_bonus(
-        organization_subscriptions, target_org_id,
-        BUSINESS_BONUS_TRIGGER_A, BUSINESS_BONUS_TRIGGER_B, BUSINESS_BONUS_CODE,
-        current_user["id"], get_active_pillars,
-    )
-
     owner = await users.find_one({"org_id": target_org_id, "role": "owner"})
     if owner and owner["_id"] != current_user["id"]:
         amount_label = f"₹{price_at_purchase}/year" if billing_cycle == "yearly" else f"₹{price_at_purchase}/month"
         await notify(owner["_id"], "plan_activated", f"{plan['name']} is now active", amount_label, "plan", None)
-    if bonus_doc and owner:
-        await notify(owner["_id"], "plan_activated", "Networking Marketing is now active — free bonus", "₹0/month (MANAGE + GROW bonus)", "plan", None)
 
     await log_audit(current_user["id"], "plan.subscribed", "organization", target_org_id, {"planCode": plan_code, "billingCycle": billing_cycle})
-    if bonus_doc:
-        await log_audit(current_user["id"], "plan.bundle_bonus_granted", "organization", target_org_id, {"planCode": BUSINESS_BONUS_CODE})
-    return {"subscription": to_out(doc), "bonusGranted": to_out(bonus_doc) if bonus_doc else None}
+    return {"subscription": to_out(doc)}
 
 
 @router.post("/cancel")
@@ -295,16 +306,10 @@ async def cancel(body: dict, current_user: dict = Depends(get_current_user)):
     updated = await organization_subscriptions.find_one({"_id": existing["_id"]})
     await log_audit(current_user["id"], "plan.cancelled", "organization", org_id, {"planCode": plan_code})
 
-    # If this cancellation broke the MANAGE+GROW pair, the free CONNECT
-    # bonus (if it was ever granted free) is no longer earned -- revoke it.
-    # A CONNECT subscription the business actually paid for is untouched.
-    revoked_bonus = await revoke_bundle_bonus_if_broken(
-        organization_subscriptions, org_id,
-        BUSINESS_BONUS_TRIGGER_A, BUSINESS_BONUS_TRIGGER_B, BUSINESS_BONUS_CODE,
-        get_active_pillars,
-    )
     # Any add-on that required THIS specific pillar (e.g. "reels" requires
-    # GROW) no longer stands on its own -- cancel it too.
+    # GROW) no longer stands on its own -- cancel it too. (The bundle-bonus
+    # auto-revoke that used to run here was removed along with the bonus
+    # feature itself -- see this file's header comment.)
     cascaded = await cascade_cancel_dependent_addons(organization_subscriptions, plans_collection, org_id, plan_code)
 
-    return {"subscription": to_out(updated), "bonusRevoked": revoked_bonus, "addonsCancelled": cascaded}
+    return {"subscription": to_out(updated), "addonsCancelled": cascaded}
