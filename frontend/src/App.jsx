@@ -43,6 +43,7 @@ import PartnerDashboard from './pages/partner/Dashboard';
 import PartnerRequests from './pages/partner/Requests';
 import PartnerPartnerships from './pages/partner/Partnerships';
 import Wallet from './pages/partner/Wallet';
+import PartnerPlans from './pages/partner/Plans';
 
 import InternalDashboard from './pages/internal/Dashboard';
 import Tasks from './pages/internal/Tasks';
@@ -110,6 +111,7 @@ export default function App() {
           <Route path="/partner/requests/:id" element={<ProtectedRoute allow={['partner']}><ReferralDetail basePath="/partner/requests" /></ProtectedRoute>} />
           <Route path="/partner/partnerships" element={<ProtectedRoute allow={['partner']}><PartnerPartnerships /></ProtectedRoute>} />
           <Route path="/partner/wallet" element={<ProtectedRoute allow={['partner']}><Wallet /></ProtectedRoute>} />
+          <Route path="/partner/plans" element={<ProtectedRoute allow={['partner']}><PartnerPlans /></ProtectedRoute>} />
 
           {/* Internal ROSKYRO team dashboard */}
           <Route path="/team" element={<ProtectedRoute allow={['internal']}><InternalDashboard /></ProtectedRoute>} />
