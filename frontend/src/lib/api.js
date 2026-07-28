@@ -23,6 +23,34 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Fixed: there was no response interceptor at all -- the JWT is long-lived
+// (JWT_EXPIRES_DAYS=7, backend/app/config.py) with no refresh mechanism,
+// and AuthContext's `user` state is only ever populated once on mount
+// (loadMe() in a plain useEffect). So once a token actually expired, or an
+// admin deactivated the account mid-session, EVERY subsequent request
+// failed with a 401 from get_current_user (app/auth.py: "Missing
+// authorization token." / "Invalid or expired token." / "User not
+// found.") -- but nothing ever cleared the stale `user` object or sent the
+// person back to /login. They'd sit on a fully-rendered authenticated
+// screen with every data fetch silently failing, with no way back to
+// /login short of manually clicking "Sign out." Scoped to 401 only (not
+// 403): a 403 from require_roles/require_internal is a legitimate
+// "you don't have permission for THIS action" response on an otherwise
+// valid session and must not force a full logout.
+let onSessionExpired = null;
+export function setSessionExpiredHandler(handler) {
+  onSessionExpired = handler;
+}
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 401 && onSessionExpired) {
+      onSessionExpired();
+    }
+    return Promise.reject(error);
+  },
+);
+
 // NOTE: browser localStorage is used here (client app only, not a Claude
 // artifact) purely to persist the demo session across page reloads.
 function localStorageSafeGet(key) {
