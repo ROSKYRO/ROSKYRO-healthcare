@@ -39,10 +39,19 @@ from app.db import (
 # index. Grouped by collection in the same order routers reference them.
 _INDEX_PLAN = [
     (users, ["email", "phone", "org_id", "role"]),
-    (organizations, ["business_type", "status"]),
+    # "created_at" and "name" back list_orgs's and org_directory's .sort()
+    # calls in routers/orgs.py -- an unindexed sort forces Mongo to load
+    # every matching document into memory before it can order and slice
+    # to the first page, even though only up to 300 rows are ever returned.
+    (organizations, ["business_type", "status", "created_at", "name"]),
     (partners, ["org_id", "category_id", "verification_status", "is_available_now"]),
     (partner_categories, ["slug"]),
-    (partner_services, ["partner_id"]),
+    # "is_active" backs the AND-filter half of partners.py's
+    # search_by_service (name regex + is_active=True) -- doesn't help the
+    # regex itself (unanchored regex can't use an index either way, same
+    # as this file's policy for other keyword-search fields) but lets
+    # Mongo narrow on is_active before evaluating the regex.
+    (partner_services, ["partner_id", "is_active"]),
     (partner_agreements, ["partner_id"]),
     (referrals, ["referring_org_id", "partner_id", "status", "created_at"]),
     (referral_status_history, ["referral_id"]),
@@ -63,7 +72,11 @@ _INDEX_PLAN = [
     (reports, ["org_id"]),
     (organization_subscriptions, [[("org_id", 1), ("status", 1)], [("org_id", 1), ("plan_code", 1)], "status"]),
     (partner_subscriptions, [[("org_id", 1), ("status", 1)], [("org_id", 1), ("plan_code", 1)], "status"]),
-    (subscription_renewals, [[("org_id", 1), ("period", 1)], [("subscription_id", 1), ("period", 1)], "status"]),
+    # Plain "period" added for settlements.py's admin_wallet_summary,
+    # which filters ONLY by period (no org_id/subscription_id prefix) --
+    # the two compound indexes above can't serve that query efficiently
+    # since neither leads with "period" alone.
+    (subscription_renewals, [[("org_id", 1), ("period", 1)], [("subscription_id", 1), ("period", 1)], "status", "period"]),
     (booking_settings, ["org_id"]),
     (patients, [[("org_id", 1), ("updated_at", -1)], "name", "phone"]),
     (queue_entries, [[("org_id", 1), ("checked_in_at", 1)]]),
