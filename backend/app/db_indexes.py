@@ -132,6 +132,22 @@ _INDEX_PLAN = [
 #   - settlements: referral_id -- transition_referral (referrals.py) only
 #     ever creates one settlement per completed referral; this is the
 #     backstop behind that endpoint's own compare-and-set status guard.
+#   - partnerships: (org_id, category_id) WHERE status="active" (a partial
+#     index -- see the partialFilterExpression kwarg below) -- _set_
+#     partnership (partnerships.py) ends whatever partnership was active
+#     for this (org_id, category_id) before inserting the new one; two
+#     concurrent "set my partner for this category" calls (a double-click,
+#     or a request retried after a slow/timed-out response) could otherwise
+#     both pass that same end-the-old-one step and both insert an active
+#     row, leaving two simultaneously "active" partnerships for one
+#     category -- silently breaking the "at most one active partnership
+#     per (org, category)" invariant this whole file's module docstring
+#     promises. Deliberately partial (scoped to status="active" only) since
+#     a business's ENDED/historical partnerships for the same category are
+#     expected and must NOT collide with each other or with the current
+#     active one -- a plain (non-partial) unique index here would reject
+#     the second partnership ever set for a given category, not just a
+#     genuine concurrent duplicate.
 # NOTE: if unique index creation itself ever fails (e.g. pre-existing
 # duplicate rows in an already-corrupted real database), this same
 # try/except swallows that failure silently too -- the app still boots,
@@ -139,8 +155,9 @@ _INDEX_PLAN = [
 # deployment should monitor startup logs (or add an explicit index-health
 # check) rather than assume this is bulletproof.
 _UNIQUE_INDEX_PLAN = [
-    (subscription_renewals, [("subscription_id", 1), ("period", 1)]),
-    (settlements, [("referral_id", 1)]),
+    (subscription_renewals, [("subscription_id", 1), ("period", 1)], {}),
+    (settlements, [("referral_id", 1)], {}),
+    (partnerships, [("org_id", 1), ("category_id", 1)], {"partialFilterExpression": {"status": "active"}}),
 ]
 
 
@@ -160,9 +177,9 @@ async def ensure_indexes():
                 # behavior.
                 pass
 
-    for collection, spec in _UNIQUE_INDEX_PLAN:
+    for collection, spec, extra_kwargs in _UNIQUE_INDEX_PLAN:
         try:
-            await collection.create_index(spec, unique=True)
+            await collection.create_index(spec, unique=True, **extra_kwargs)
         except Exception:
             # See the note above _UNIQUE_INDEX_PLAN -- still never block
             # startup (a real deployment shouldn't crash-loop over an index
