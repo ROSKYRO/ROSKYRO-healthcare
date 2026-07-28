@@ -138,22 +138,25 @@ function NewsletterBox() {
   }
 
   return (
-    <form onSubmit={submit} className="mt-3 flex gap-2">
-      <input
-        type="email"
-        required
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        placeholder="you@business.com"
-        className="min-w-0 flex-1 rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
-      />
-      <button
-        type="submit"
-        disabled={state === 'busy'}
-        className="shrink-0 bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition disabled:opacity-60"
-      >
-        Subscribe
-      </button>
+    <form onSubmit={submit} className="mt-3">
+      <div className="flex gap-2">
+        <input
+          type="email"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@business.com"
+          className="min-w-0 flex-1 rounded-lg bg-white/10 border border-white/10 px-3 py-2 text-sm text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
+        />
+        <button
+          type="submit"
+          disabled={state === 'busy'}
+          className="shrink-0 bg-brand-600 hover:bg-brand-500 text-white text-sm font-semibold px-4 py-2 rounded-lg transition disabled:opacity-60"
+        >
+          Subscribe
+        </button>
+      </div>
+      {state === 'error' && <p className="text-sm text-rose-300 mt-2">Could not subscribe right now. Please try again.</p>}
     </form>
   );
 }
