@@ -52,9 +52,13 @@ export default function GrowthHub() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatTile label="Visibility Score" value={dash.visibilityScore ? `${dash.visibilityScore.score}/100` : '—'} icon={"\u{1F441}\u{FE0F}"} tone="brand" />
-        <StatTile label="GBP Completeness" value={breakdown.gbp_completeness ? `${breakdown.gbp_completeness}%` : '—'} icon={"\u{1F4CD}"} tone="blue" />
-        <StatTile label="Review Velocity" value={breakdown.review_velocity ? `${breakdown.review_velocity}%` : '—'} icon={"\u{2B50}"} tone="amber" />
-        <StatTile label="SEO Health" value={breakdown.seo_health ? `${breakdown.seo_health}%` : '—'} icon={"\u{1F50D}"} tone="slate" />
+        {/* Fixed: a truthy check treated a legitimately-computed 0% the
+            same as "not calculated yet" (showing "—" either way) --
+            checking for null/undefined instead so a real 0% is no longer
+            hidden as if the score simply hadn't run. */}
+        <StatTile label="GBP Completeness" value={breakdown.gbp_completeness != null ? `${breakdown.gbp_completeness}%` : '—'} icon={"\u{1F4CD}"} tone="blue" />
+        <StatTile label="Review Velocity" value={breakdown.review_velocity != null ? `${breakdown.review_velocity}%` : '—'} icon={"\u{2B50}"} tone="amber" />
+        <StatTile label="SEO Health" value={breakdown.seo_health != null ? `${breakdown.seo_health}%` : '—'} icon={"\u{1F50D}"} tone="slate" />
       </div>
 
       <Card>

@@ -1,13 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
 import UpgradePrompt from '../../components/UpgradePrompt';
-import { Card, Badge, Button, Input, Select, PageLoading, EmptyState, formatDateTime } from '../../components/ui';
+import { Card, Badge, Button, Input, Select, Textarea, PageLoading, EmptyState, formatDateTime } from '../../components/ui';
 
 export default function Whatsapp() {
   const [messages, setMessages] = useState(null);
   const [blocked, setBlocked] = useState(false);
   const [templates, setTemplates] = useState([]);
-  const [form, setForm] = useState({ patientName: '', patientPhone: '', templateName: '' });
+  const [form, setForm] = useState({ patientName: '', patientPhone: '', templateName: '', message: '' });
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [sendError, setSendError] = useState('');
@@ -27,11 +27,21 @@ export default function Whatsapp() {
 
   async function send(e) {
     e.preventDefault();
+    // Fixed: "Custom message" (templateName === '') had no way to actually
+    // type a message body -- the form never collected `message`, so every
+    // send with this option selected hit the backend's "Provide either a
+    // message or a known templateName." 400, with no hint to the user that
+    // a text field was even missing. Now required client-side whenever no
+    // template is selected, and included in the POST body.
+    if (!form.templateName && !form.message.trim()) {
+      setSendError('Please type a message, or choose a template instead.');
+      return;
+    }
     setSending(true);
     setSendError('');
     try {
       await api.post('/whatsapp/send', form);
-      setForm({ patientName: '', patientPhone: '', templateName: '' });
+      setForm({ patientName: '', patientPhone: '', templateName: '', message: '' });
       load();
     } catch (err) {
       setSendError(err?.response?.data?.error || 'Could not send this message. Please try again.');
@@ -66,11 +76,26 @@ export default function Whatsapp() {
         <form onSubmit={send} className="grid grid-cols-3 gap-4 items-end">
           <Input label="Patient name" required value={form.patientName} onChange={(e) => setForm((f) => ({ ...f, patientName: e.target.value }))} />
           <Input label="Phone" required value={form.patientPhone} onChange={(e) => setForm((f) => ({ ...f, patientPhone: e.target.value }))} />
-          <Select label="Template" value={form.templateName} onChange={(e) => setForm((f) => ({ ...f, templateName: e.target.value }))}>
+          <Select
+            label="Template"
+            value={form.templateName}
+            onChange={(e) => setForm((f) => ({ ...f, templateName: e.target.value, message: e.target.value ? '' : f.message }))}
+          >
             <option value="">Custom message</option>
             {templates.map((t) => <option key={t.key} value={t.key}>{t.key.replace(/_/g, ' ')}</option>)}
           </Select>
           {selectedTemplate && <p className="col-span-3 text-xs text-gray-400 -mt-2">Preview: "{selectedTemplate.preview}"</p>}
+          {!form.templateName && (
+            <Textarea
+              label="Message"
+              required
+              rows={2}
+              placeholder="Type your custom message…"
+              value={form.message}
+              onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
+              className="col-span-3"
+            />
+          )}
           {sendError && <p className="col-span-3 text-sm text-rose-600">{sendError}</p>}
           <div className="col-span-3"><Button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send Message'}</Button></div>
         </form>

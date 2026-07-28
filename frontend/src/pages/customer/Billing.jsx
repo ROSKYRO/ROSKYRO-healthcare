@@ -34,8 +34,32 @@ export default function Billing() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const lineItems = items.filter((it) => it.description && it.unitPrice).map((it) => ({ ...it, quantity: Number(it.quantity) || 1, unitPrice: Number(it.unitPrice) }));
-    if (!lineItems.length) return;
+    // Fixed: rows with only ONE of description/unitPrice filled in used to
+    // be silently dropped from what's actually sent, even though their
+    // amount was already counted in the previewed Subtotal above -- so a
+    // half-filled row could make the created invoice bill for less than
+    // what the user saw on screen, with zero warning. And if every row was
+    // incomplete, lineItems came out empty and the submit silently did
+    // nothing (no formError, Create Invoice button just... didn't).
+    // Now: a row counts as "filled" only if it has a description AND a
+    // positive unit price; anything else (fully empty, or only half-typed)
+    // is rejected up front with a clear message instead of being dropped.
+    const incomplete = items.some((it) => {
+      const hasDescription = !!it.description.trim();
+      const hasPrice = it.unitPrice !== '' && Number(it.unitPrice) > 0;
+      return hasDescription !== hasPrice; // exactly one of the two is set
+    });
+    if (incomplete) {
+      setFormError('Each line item needs both a description and a unit price — fill both in or remove the row.');
+      return;
+    }
+    const lineItems = items
+      .filter((it) => it.description.trim() && Number(it.unitPrice) > 0)
+      .map((it) => ({ ...it, quantity: Number(it.quantity) || 1, unitPrice: Number(it.unitPrice) }));
+    if (!lineItems.length) {
+      setFormError('Add at least one line item with a description and a unit price.');
+      return;
+    }
     setFormError('');
     setSaving(true);
     try {
