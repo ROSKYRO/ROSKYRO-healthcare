@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 
-from app.db import partner_plans as partner_plans_collection, partner_subscriptions, organizations, users
+from app.db import (
+    partner_plans as partner_plans_collection, partner_subscriptions, organizations, users,
+    plans as business_plans_collection,
+)
 from app.auth import get_current_user, require_roles
 from app.utils.pillars import get_active_partner_pillars
 from app.utils.plans import next_renewal_date
@@ -26,6 +29,23 @@ router = APIRouter(prefix="/api/partner-plans", tags=["partner-plans"])
 # plans.py's business-side rule) is retired -- see plans.py's header
 # comment for the full reasoning (only stops NEW bonuses; any partner
 # already granted a free MANAGE subscription before this change keeps it).
+#
+# HARDENED (found live on roskyro.in): the "For Partners" pricing tab was
+# rendering completely blank in production, and subscribing to a partner
+# plan would 404 as "Unknown plan." -- both traced to every read in this
+# file (list_partner_plans, subscribe_partner, the bundle/addon helpers,
+# the admin subscriptions view, my_partner_subscriptions) querying ONLY
+# the partner_plans collection directly. In the demo/mock DB that
+# collection is always deep-copied from the business catalog at seed time
+# (see seed.py) so this never showed up locally, but on a real deployment
+# where partner_plans was never separately populated for every code, those
+# lookups silently returned nothing. Fixed by making the business `plans`
+# collection the actual fallback data source everywhere in this file, not
+# just the price-sync target on write -- see _effective_partner_plans_map()
+# below. Every catalog read here now goes through it, so a partner_plans
+# collection that's partially or entirely empty still produces a complete,
+# correctly-priced catalog identical to the business tab, and subscribing
+# to any valid business-catalog code always works.
 
 # NOTE: monthlyPrice/yearlyPrice deliberately excluded (removed per explicit
 # request) -- pricing is no longer independently editable on this catalog
@@ -38,6 +58,47 @@ EDITABLE_PLAN_FIELDS_CAMEL = {
     "description": "description", "bestFor": "best_for", "customerPromise": "customer_promise",
     "features": "features", "badge": "badge",
 }
+
+# Copy fields a partner_plans doc is allowed to override on top of the
+# business catalog's base doc -- everything else (importantly, pricing) is
+# always taken from the business plan, never from partner_plans.
+_COPY_FIELDS = ("name", "tagline", "description", "best_for", "customer_promise", "features", "badge")
+
+
+async def _effective_partner_plans_map(codes: list | None = None) -> dict:
+    """code -> merged effective partner-audience plan doc, for either every
+    business plan (codes=None) or just the given codes. The business `plans`
+    collection is the base for EVERY field (guaranteed to exist and be
+    correctly priced); a partner_plans doc for that code, if one exists,
+    only overrides the copy fields in _COPY_FIELDS when they're actually
+    set (non-None/non-empty) -- monthly_price/yearly_price are always
+    re-taken from the business plan afterward regardless of what a legacy
+    partner_plans doc might still contain, so this can never regress the
+    price-sync guarantee even if an old partner_plans row has a stale price.
+    Returns {} if none of the requested codes exist on the business side."""
+    query = {"_id": {"$in": list(codes)}} if codes is not None else {}
+    business_rows = await business_plans_collection.find(query).sort("sort_order", 1).to_list(None)
+    if not business_rows:
+        return {}
+    partner_rows = await partner_plans_collection.find(
+        {"_id": {"$in": [b["_id"] for b in business_rows]}}
+    ).to_list(None)
+    partner_by_code = {r["_id"]: r for r in partner_rows}
+
+    merged_map = {}
+    for business_plan in business_rows:
+        code = business_plan["_id"]
+        merged = dict(business_plan)
+        partner_doc = partner_by_code.get(code)
+        if partner_doc:
+            for field in _COPY_FIELDS:
+                if partner_doc.get(field) not in (None, "", []):
+                    merged[field] = partner_doc[field]
+        merged["monthly_price"] = business_plan["monthly_price"]
+        merged["yearly_price"] = business_plan["yearly_price"]
+        merged["_id"] = code
+        merged_map[code] = merged
+    return merged_map
 
 
 def _plan_out(doc: dict) -> dict:
@@ -59,9 +120,11 @@ def _require_partner(current_user: dict):
 async def list_partner_plans():
     """Public partner-audience pricing catalog (used by the marketing
     Pricing/Services pages' 'For Partners' tab, and the in-app partner
-    Plans page)."""
-    rows = await partner_plans_collection.find({}).sort("sort_order", 1).to_list(None)
-    return {"plans": [_plan_out(r) for r in rows]}
+    Plans page). Always derived from the business catalog (see
+    _effective_partner_plans_map) so this never renders an empty/partial
+    list even if partner_plans hasn't been separately populated."""
+    merged_map = await _effective_partner_plans_map()
+    return {"plans": [_plan_out(r) for r in merged_map.values()]}
 
 
 @router.patch("/{code}", dependencies=[Depends(require_roles("roskyro_admin"))])
@@ -72,7 +135,13 @@ async def patch_partner_plan(code: str, body: dict, current_user: dict = Depends
     caller sends monthlyPrice/yearlyPrice in the body, those keys are simply
     not in EDITABLE_PLAN_FIELDS_CAMEL, so they're silently ignored here --
     prices only ever change via plans.py's patch_plan(), which propagates
-    into this collection automatically."""
+    into this collection automatically.
+
+    Existence is checked against the BUSINESS catalog, not this collection
+    -- partner_plans may legitimately have no row yet for a perfectly valid
+    code (see _effective_partner_plans_map), so a missing partner_plans
+    document must not 404 a real plan. upsert=True below creates that row
+    (with just the edited copy fields) the first time an admin edits it."""
     updates = {}
     for camel, snake in EDITABLE_PLAN_FIELDS_CAMEL.items():
         if camel in body:
@@ -82,13 +151,15 @@ async def patch_partner_plan(code: str, body: dict, current_user: dict = Depends
     if not updates:
         raise HTTPException(status_code=400, detail="No editable fields provided.")
 
-    await partner_plans_collection.update_one({"_id": code}, {"$set": updates})
-    updated = await partner_plans_collection.find_one({"_id": code})
-    if not updated:
+    business_plan = await business_plans_collection.find_one({"_id": code})
+    if not business_plan:
         raise HTTPException(status_code=404, detail="Unknown plan.")
 
+    await partner_plans_collection.update_one({"_id": code}, {"$set": updates}, upsert=True)
+
     await log_audit(current_user["id"], "partner_plan.updated", "partner_plan", None, {"code": code, "fields": list(body.keys())})
-    return {"plan": _plan_out(updated)}
+    merged = (await _effective_partner_plans_map([code])).get(code)
+    return {"plan": _plan_out(merged)}
 
 
 @router.get("/subscriptions", dependencies=[Depends(require_roles("roskyro_admin"))])
@@ -101,8 +172,7 @@ async def all_partner_subscriptions():
     plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
     org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
     orgs_by_id = {o["_id"]: o for o in org_docs}
-    plan_docs = await partner_plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
-    plans_by_code = {p["_id"]: p for p in plan_docs}
+    plans_by_code = await _effective_partner_plans_map(plan_codes) if plan_codes else {}
 
     subs = []
     for r in rows:
@@ -128,10 +198,11 @@ async def my_partner_subscriptions(current_user: dict = Depends(get_current_user
 
     # Batch-fetch every referenced plan ONCE via $in instead of a find_one
     # per subscription row -- mirrors the same fix in routers/plans.py's
-    # my_subscriptions.
+    # my_subscriptions. Goes through the business-catalog-backed merge so a
+    # subscription never shows a null name/price just because partner_plans
+    # itself has no row for that code.
     plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
-    plan_docs = await partner_plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
-    plans_by_code = {p["_id"]: p for p in plan_docs}
+    plans_by_code = await _effective_partner_plans_map(plan_codes) if plan_codes else {}
 
     out = []
     for r in rows:
@@ -169,7 +240,7 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
     if not plan_code:
         raise HTTPException(status_code=400, detail="planCode is required.")
 
-    plan = await partner_plans_collection.find_one({"_id": plan_code})
+    plan = (await _effective_partner_plans_map([plan_code])).get(plan_code)
     if not plan:
         raise HTTPException(status_code=404, detail="Unknown plan.")
     price_at_purchase = plan.get("yearly_price") if billing_cycle == "yearly" else plan.get("monthly_price")
@@ -183,7 +254,11 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
             )
 
     if plan.get("is_bundle"):
-        addon_codes = [p["_id"] async for p in partner_plans_collection.find({"is_addon": True})]
+        # Catalog STRUCTURE (is_addon/is_bundle/bundle_pillars/requires_pillar)
+        # is always read from the business collection now, not partner_plans
+        # -- see this file's header comment -- since that's guaranteed to be
+        # fully populated, unlike partner_plans in a fresh deployment.
+        addon_codes = [p["_id"] async for p in business_plans_collection.find({"is_addon": True})]
         await partner_subscriptions.update_many(
             {"org_id": org_id, "status": "active", "plan_code": {"$nin": ["complete"] + addon_codes}},
             {"$set": {"status": "cancelled", "cancelled_at": now()}},
@@ -195,7 +270,7 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
         # Same double-billing fix as routers/plans.py's subscribe -- block
         # subscribing to an individual pillar already covered by an active
         # bundle, not just an exact-plan_code duplicate.
-        covering_bundle = await find_active_bundle_covering_pillar(partner_subscriptions, partner_plans_collection, org_id, plan_code)
+        covering_bundle = await find_active_bundle_covering_pillar(partner_subscriptions, business_plans_collection, org_id, plan_code)
         if covering_bundle:
             raise HTTPException(
                 status_code=409,
@@ -232,6 +307,6 @@ async def cancel_partner(body: dict, current_user: dict = Depends(get_current_us
     updated = await partner_subscriptions.find_one({"_id": existing["_id"]})
     await log_audit(current_user["id"], "partner_plan.cancelled", "organization", org_id, {"planCode": plan_code})
 
-    cascaded = await cascade_cancel_dependent_addons(partner_subscriptions, partner_plans_collection, org_id, plan_code)
+    cascaded = await cascade_cancel_dependent_addons(partner_subscriptions, business_plans_collection, org_id, plan_code)
 
     return {"subscription": to_out(updated), "addonsCancelled": cascaded}
