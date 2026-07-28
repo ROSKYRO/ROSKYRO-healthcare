@@ -11,6 +11,7 @@ export default function Patients() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', email: '', age: '', gender: '', notes: '' });
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const navigate = useNavigate();
 
   const load = useCallback(() => {
@@ -31,7 +32,9 @@ export default function Patients() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (saving) return;
     setError('');
+    setSaving(true);
     try {
       await api.post('/patients', { ...form, age: form.age ? Number(form.age) : undefined });
       setShowForm(false);
@@ -39,6 +42,8 @@ export default function Patients() {
       load();
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not add patient. Please try again.');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -64,7 +69,7 @@ export default function Patients() {
             <Input label="Age" type="number" value={form.age} onChange={(e) => setForm((f) => ({ ...f, age: e.target.value }))} />
             <Textarea label="Notes" rows={2} className="col-span-2" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
             {error && <p className="text-sm text-rose-600 col-span-2">{error}</p>}
-            <div className="col-span-2"><Button type="submit">Save Patient</Button></div>
+            <div className="col-span-2"><Button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save Patient'}</Button></div>
           </form>
         </Card>
       )}

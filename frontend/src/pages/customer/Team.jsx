@@ -9,6 +9,7 @@ export default function Team() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', role: 'staff', phone: '', password: '' });
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const [loadError, setLoadError] = useState('');
 
@@ -23,7 +24,9 @@ export default function Team() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (saving) return;
     setError('');
+    setSaving(true);
     try {
       await api.post(`/orgs/${user.orgId}/team`, form);
       setShowForm(false);
@@ -31,6 +34,8 @@ export default function Team() {
       load();
     } catch (err) {
       setError(err?.response?.data?.error || 'Could not add team member.');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -66,7 +71,7 @@ export default function Team() {
             <Input label="Mobile number" required value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="98000 00002" />
             <Input label="Temporary password" type="password" required value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
             {error && <p className="text-sm text-rose-600 col-span-2">{error}</p>}
-            <div className="col-span-2"><Button type="submit">Add to team</Button></div>
+            <div className="col-span-2"><Button type="submit" disabled={saving}>{saving ? 'Adding…' : 'Add to team'}</Button></div>
           </form>
         </Card>
       )}
