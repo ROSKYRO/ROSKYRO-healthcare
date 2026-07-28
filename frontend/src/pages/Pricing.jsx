@@ -16,13 +16,13 @@ const PRICING_FAQS = [
 ];
 
 // Same three services (GROW / MANAGE / Networking Marketing), two different
-// audiences with two different price catalogs -- a healthcare business
-// pays business pricing, a Networking Marketing partner pays partner
-// pricing. Each side also has its own "buy 2, get the 3rd free" bundle
-// bonus (mirror images of each other) plus the optional Reel Making add-on.
+// audiences sharing the exact same price catalog -- a healthcare business
+// pays business pricing, a Networking Marketing partner pays the identical
+// partner pricing, plus the optional Reel Making add-on. (The former "buy
+// 2, get the 3rd free" bundle bonus has been retired.)
 const AUDIENCES = [
-  { key: 'business', label: 'For Businesses', endpoint: '/plans', registerPath: '/register', bonusText: 'Activate MANAGE + GROW together and Networking Marketing (CONNECT) is unlocked free, as a bonus earning service.' },
-  { key: 'partner', label: 'For Partners', endpoint: '/partner-plans', registerPath: '/contact?reason=become-partner', bonusText: 'Activate GROW + Networking Marketing (CONNECT) together and MANAGE is unlocked free.' },
+  { key: 'business', label: 'For Businesses', endpoint: '/plans', registerPath: '/register' },
+  { key: 'partner', label: 'For Partners', endpoint: '/partner-plans', registerPath: '/contact?reason=become-partner' },
 ];
 
 export default function Pricing() {
@@ -87,9 +87,6 @@ export default function Pricing() {
           </div>
         ) : !plans ? <PageLoading /> : (
           <>
-            <div className="max-w-3xl mx-auto mb-6 text-center bg-teal-50 border border-teal-100 rounded-xl px-5 py-3">
-              <p className="text-sm text-gray-700">{'\u{1F381}'} <span className="font-semibold">Bonus:</span> {current.bonusText}</p>
-            </div>
             <PricingCards
               plans={plans}
               ctaLabel="Get Started"
