@@ -73,6 +73,10 @@ const NAV = {
     // manual, by-hand action, never self-service (see auth.py's login/
     // password-resets routers).
     { to: '/team/password-requests', label: 'Password Requests', icon: '\u{1F511}', roles: ['roskyro_admin'] },
+    // Super-admin only — clears every seeded/demo business record in one
+    // confirmed, irreversible action so the platform can be handed real
+    // clients on a clean slate. See routers/admin_reset.py.
+    { to: '/team/reset-demo-data', label: 'Reset Demo Data', icon: '\u{1F9F9}', roles: ['roskyro_admin'] },
   ],
 };
 
