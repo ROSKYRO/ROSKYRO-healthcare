@@ -4,7 +4,7 @@
 # This module has no dependency on auth.py, so both can import it safely.
 from app.db import (
     organization_subscriptions, plans as plans_collection,
-    partner_subscriptions, partner_plans as partner_plans_collection,
+    partner_subscriptions,
 )
 
 PILLAR_CODES = ["grow", "manage", "connect"]
@@ -34,7 +34,21 @@ async def get_active_pillars(org_id: str | None) -> set[str]:
 
 
 async def get_active_partner_pillars(org_id: str | None) -> set[str]:
-    """Partner-audience mirror of get_active_pillars() above -- reads from
-    the separate partner_subscriptions/partner_plans collections (its own
-    pricing catalog), not the business ones."""
-    return await _active_pillars_from(partner_subscriptions, partner_plans_collection, org_id)
+    """Partner-audience mirror of get_active_pillars() above -- reads
+    subscription ROWS from the separate partner_subscriptions collection
+    (its own subscription records, not the business side's), but resolves
+    catalog STRUCTURE (is_bundle/bundle_pillars) from the business `plans`
+    collection now, not partner_plans.
+
+    HARDENED (found live on roskyro.in, see routers/partner_plans.py's
+    header comment for the full story): this used to read plan.is_bundle/
+    bundle_pillars from partner_plans_collection. On a real deployment
+    where that collection was never separately populated for every code,
+    every lookup here silently returned None ("if not plan: continue"),
+    so this function returned an EMPTY set regardless of how many partner
+    subscriptions were actually active -- breaking every requires_pillar
+    gate (e.g. the "reels" add-on wrongly refusing to activate even with
+    GROW active) and the /partner-plans/mine activePillars list. The
+    business `plans` collection is guaranteed to have this structure for
+    every code, so that's the source of truth for it now."""
+    return await _active_pillars_from(partner_subscriptions, plans_collection, org_id)
