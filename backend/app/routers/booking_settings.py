@@ -58,6 +58,35 @@ async def patch_settings(body: dict, current_user: dict = Depends(get_current_us
         if camel in body:
             updates[snake] = body[camel]
 
+    # Fixed: these two were stored completely unvalidated, and both feed
+    # code paths on the PUBLIC (unauthenticated, patient-facing) booking
+    # router the moment they're bad:
+    #   - bookingWindowDays flows straight into utils/booking.py's
+    #     upcoming_dates(), which does `range(int(window_days))` -- a
+    #     non-numeric value (a stray string, an empty field) crashes with
+    #     an unhandled ValueError, taking down BOTH
+    #     GET /public/booking/{org}/doctors/{id}/availability AND
+    #     POST /public/booking/{org}/{id}/book for every patient, for
+    #     every doctor at this business, until an admin manually fixes
+    #     the DB row.
+    #   - isEnabled is even sneakier: public_booking.py's
+    #     _load_org_and_settings checks `not settings.get("is_enabled")`
+    #     to decide whether booking is open. In Python, the STRING "false"
+    #     is truthy, so `{"isEnabled": "false"}` (e.g. a form/API client
+    #     that doesn't send a real JSON boolean) would leave booking
+    #     ENABLED -- the exact opposite of what was just "saved" as off.
+    if "is_enabled" in updates:
+        if not isinstance(updates["is_enabled"], bool):
+            raise HTTPException(status_code=400, detail="isEnabled must be true or false.")
+    if "booking_window_days" in updates:
+        try:
+            window_days = int(updates["booking_window_days"])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="bookingWindowDays must be a whole number.")
+        if window_days < 1:
+            raise HTTPException(status_code=400, detail="bookingWindowDays must be at least 1.")
+        updates["booking_window_days"] = window_days
+
     if not updates:
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
