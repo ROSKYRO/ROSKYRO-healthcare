@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import api, { setToken, getToken } from '../lib/api';
+import api, { setToken, getToken, setSessionExpiredHandler } from '../lib/api';
 
 const AuthContext = createContext(null);
 
@@ -82,6 +82,16 @@ export function AuthProvider({ children }) {
     setToken(null);
     setUser(null);
   }
+
+  // Fixed: registers this AuthProvider's own logout() as the handler
+  // api.js's response interceptor calls on any 401 -- see api.js for why
+  // this was needed (a stale/invalidated session used to never clear
+  // itself). Runs once per mount; logout() is stable (doesn't reference
+  // any changing state), so this doesn't need to re-run on every render.
+  useEffect(() => {
+    setSessionExpiredHandler(logout);
+    return () => setSessionExpiredHandler(null);
+  }, []);
 
   return (
     <AuthContext.Provider value={{ user, loading, login, register, logout, refresh: loadMe, refreshPillars }}>
