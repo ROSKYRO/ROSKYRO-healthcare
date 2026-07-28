@@ -114,9 +114,17 @@ async def my_subscriptions(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Customer accounts only.")
 
     rows = await organization_subscriptions.find({"org_id": current_user["orgId"]}).sort("started_at", -1).to_list(None)
+
+    # Batch-fetch every referenced plan ONCE via $in instead of a find_one
+    # per subscription row -- same 1 + N -> fixed-2-queries fix already
+    # applied to GET /subscriptions above.
+    plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
+    plan_docs = await plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
     out = []
     for r in rows:
-        plan = await plans_collection.find_one({"_id": r["plan_code"]})
+        plan = plans_by_code.get(r["plan_code"])
         item = to_out(r)
         item["name"] = plan.get("name") if plan else None
         item["monthly_price"] = plan.get("monthly_price") if plan else None
@@ -141,9 +149,14 @@ async def my_subscriptions(current_user: dict = Depends(get_current_user)):
 @router.get("/org/{org_id}", dependencies=[Depends(require_internal)])
 async def org_subscriptions(org_id: str):
     rows = await organization_subscriptions.find({"org_id": org_id}).sort("started_at", -1).to_list(None)
+
+    plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
+    plan_docs = await plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
     out = []
     for r in rows:
-        plan = await plans_collection.find_one({"_id": r["plan_code"]})
+        plan = plans_by_code.get(r["plan_code"])
         item = to_out(r)
         item["name"] = plan.get("name") if plan else None
         item["monthly_price"] = plan.get("monthly_price") if plan else None

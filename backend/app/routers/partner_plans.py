@@ -110,9 +110,17 @@ async def my_partner_subscriptions(current_user: dict = Depends(get_current_user
         raise HTTPException(status_code=403, detail="Partner accounts only.")
 
     rows = await partner_subscriptions.find({"org_id": current_user["orgId"]}).sort("started_at", -1).to_list(None)
+
+    # Batch-fetch every referenced plan ONCE via $in instead of a find_one
+    # per subscription row -- mirrors the same fix in routers/plans.py's
+    # my_subscriptions.
+    plan_codes = list({r["plan_code"] for r in rows if r.get("plan_code")})
+    plan_docs = await partner_plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
     out = []
     for r in rows:
-        plan = await partner_plans_collection.find_one({"_id": r["plan_code"]})
+        plan = plans_by_code.get(r["plan_code"])
         item = to_out(r)
         item["name"] = plan.get("name") if plan else None
         item["monthly_price"] = plan.get("monthly_price") if plan else None

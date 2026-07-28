@@ -60,9 +60,18 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
     response["pendingApprovals"] = to_out_many(pending_approvals)
 
     if has_grow:
-        org_reviews = await reviews.find({"org_id": org_id}).to_list(None)
-        avg_rating = round(sum(r.get("rating") or 0 for r in org_reviews) / len(org_reviews), 2) if org_reviews else 0
-        response["reviews"] = {"average": avg_rating, "total": len(org_reviews)}
+        # Aggregate the average/count in Mongo instead of pulling every
+        # review document for this org over the wire just to average one
+        # field in Python -- a business with years of reviews would
+        # otherwise ship thousands of full documents on every single
+        # dashboard load just to compute two numbers.
+        review_agg = await reviews.aggregate([
+            {"$match": {"org_id": org_id}},
+            {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}, "total": {"$sum": 1}}},
+        ]).to_list(None)
+        avg_rating = round(review_agg[0]["avg_rating"] or 0, 2) if review_agg else 0
+        total_reviews = review_agg[0]["total"] if review_agg else 0
+        response["reviews"] = {"average": avg_rating, "total": total_reviews}
 
         vis_list = await visibility_score_history.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None)
         response["visibilityScore"] = to_out_many(vis_list)[0] if vis_list else None
@@ -80,11 +89,14 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         response["latestMonthlyReport"] = to_out_many(latest_report)[0] if latest_report else None
 
     if has_connect:
-        refs = await referrals.find({"referring_org_id": org_id}).to_list(None)
-        by_status: dict = {}
-        for r in refs:
-            by_status[r["status"]] = by_status.get(r["status"], 0) + 1
-        response["referralsSummary"] = [{"status": k, "count": v} for k, v in by_status.items()]
+        # Same aggregation-instead-of-fetch-everything fix as the reviews
+        # average above -- this only ever needs a count per status, not
+        # every referral document this org has ever sent.
+        status_agg = await referrals.aggregate([
+            {"$match": {"referring_org_id": org_id}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}},
+        ]).to_list(None)
+        response["referralsSummary"] = [{"status": r["_id"], "count": r["count"]} for r in status_agg]
 
     if has_manage:
         queue_waiting = await queue_entries.count_documents({
@@ -94,12 +106,15 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         followups_due = await patient_followups.count_documents({
             "org_id": org_id, "status": "pending", "due_date": {"$lte": today_str},
         })
-        unpaid = await invoices.find({"org_id": org_id, "status": {"$in": ["sent", "overdue"]}}).to_list(None)
+        unpaid_agg = await invoices.aggregate([
+            {"$match": {"org_id": org_id, "status": {"$in": ["sent", "overdue"]}}},
+            {"$group": {"_id": None, "n": {"$sum": 1}, "total": {"$sum": "$total"}}},
+        ]).to_list(None)
         response["manageSnapshot"] = {
             "queueWaiting": queue_waiting,
             "followupsDue": followups_due,
-            "unpaidInvoices": len(unpaid),
-            "unpaidInvoicesTotal": sum(float(i.get("total") or 0) for i in unpaid),
+            "unpaidInvoices": unpaid_agg[0]["n"] if unpaid_agg else 0,
+            "unpaidInvoicesTotal": float(unpaid_agg[0]["total"] or 0) if unpaid_agg else 0.0,
         }
 
     return response
@@ -142,18 +157,26 @@ async def internal_dashboard(current_user: dict = Depends(get_current_user)):
     open_tasks = await tasks.count_documents({"status": {"$ne": "done"}})
     overdue_tasks = await tasks.count_documents({"status": {"$ne": "done"}, "sla_due_at": {"$lt": now()}})
 
+    # Both queries below are platform-wide (no org_id filter), so they only
+    # ever grow with total referral/settlement volume across every business
+    # on ROSKYRO -- fetching every matching document just to count/sum in
+    # Python would get steadily slower as the platform grows, purely from
+    # this one internal dashboard load. Aggregating in Mongo keeps this a
+    # fixed-cost query regardless of how many referrals/settlements exist.
     since = now() - timedelta(days=14)
-    recent_refs = await referrals.find({"created_at": {"$gt": since}}).to_list(None)
-    by_day: dict = {}
-    for r in recent_refs:
-        day = r["created_at"].strftime("%Y-%m-%d") if hasattr(r["created_at"], "strftime") else str(r["created_at"])[:10]
-        by_day[day] = by_day.get(day, 0) + 1
-    referral_volume = [{"day": k, "n": v} for k, v in sorted(by_day.items())]
+    day_agg = await referrals.aggregate([
+        {"$match": {"created_at": {"$gt": since}}},
+        {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}}, "n": {"$sum": 1}}},
+    ]).to_list(None)
+    referral_volume = sorted(({"day": r["_id"], "n": r["n"]} for r in day_agg), key=lambda x: x["day"])
 
-    pending_settlements_list = await settlements.find({"status": "pending"}).to_list(None)
+    settlement_agg = await settlements.aggregate([
+        {"$match": {"status": "pending"}},
+        {"$group": {"_id": None, "n": {"$sum": 1}, "total": {"$sum": "$amount"}}},
+    ]).to_list(None)
     pending_settlements = {
-        "n": len(pending_settlements_list),
-        "total": sum(float(s.get("amount") or 0) for s in pending_settlements_list),
+        "n": settlement_agg[0]["n"] if settlement_agg else 0,
+        "total": float(settlement_agg[0]["total"] or 0) if settlement_agg else 0.0,
     }
 
     my_open = await tasks.count_documents({"assigned_to": current_user["id"], "status": {"$ne": "done"}})

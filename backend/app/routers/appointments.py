@@ -43,9 +43,15 @@ async def list_appointments(
     if date_filt:
         filt["appointment_date"] = date_filt
 
-    rows = await appointments.find(filt).to_list(None)
-    rows.sort(key=lambda a: (a.get("appointment_date") or "", a.get("appointment_time") or ""), reverse=True)
-    return {"appointments": to_out_many(rows[:200])}
+    # Push the sort + 200-row cap down into Mongo instead of fetching every
+    # matching appointment (which could be tens of thousands for an old
+    # business) and sorting/discarding in Python -- same result, the DB
+    # does the work using the (org_id, appointment_date) index instead of
+    # shipping the whole collection over the wire on every page load.
+    rows = await appointments.find(filt).sort(
+        [("appointment_date", -1), ("appointment_time", -1)]
+    ).limit(200).to_list(None)
+    return {"appointments": to_out_many(rows)}
 
 
 @router.get("/lookup/{booking_code}")

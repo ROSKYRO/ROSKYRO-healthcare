@@ -70,6 +70,32 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
     subscription+period (safe to re-run for the same period; already-
     generated charges are just skipped, not duplicated or errored on)."""
     active_subs = await organization_subscriptions.find({"status": "active"}).to_list(None)
+
+    # Batch-fetch everything the loop below needs via $in instead of a
+    # find_one/find_one/find_one per subscription -- this used to make
+    # POST /generate a 1 + up to 4*N query pattern for N active
+    # subscriptions (already-generated check + org + plan + owner user),
+    # which got slower purely from the platform's own subscriber growth.
+    # Now it's a fixed handful of queries no matter how many subscriptions
+    # are active.
+    sub_ids = [s["_id"] for s in active_subs]
+    org_ids = list({s["org_id"] for s in active_subs if s.get("org_id")})
+    plan_codes = list({s["plan_code"] for s in active_subs if s.get("plan_code")})
+
+    existing_renewals = await subscription_renewals.find(
+        {"subscription_id": {"$in": sub_ids}, "period": body.period}
+    ).to_list(None) if sub_ids else []
+    existing_sub_ids = {r["subscription_id"] for r in existing_renewals}
+
+    org_docs = await organizations.find({"_id": {"$in": org_ids}}).to_list(None) if org_ids else []
+    orgs_by_id = {o["_id"]: o for o in org_docs}
+
+    plan_docs = await plans_collection.find({"_id": {"$in": plan_codes}}).to_list(None) if plan_codes else []
+    plans_by_code = {p["_id"]: p for p in plan_docs}
+
+    owner_docs = await users.find({"org_id": {"$in": org_ids}, "role": "owner"}).to_list(None) if org_ids else []
+    owner_by_org_id = {u["org_id"]: u for u in owner_docs}
+
     created, skipped = 0, 0
     for sub in active_subs:
         if not sub.get("started_at") or not sub.get("billing_cycle"):
@@ -78,12 +104,11 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
         if not _is_renewal_period_due(sub["started_at"], sub["billing_cycle"], body.period):
             skipped += 1
             continue
-        existing = await subscription_renewals.find_one({"subscription_id": sub["_id"], "period": body.period})
-        if existing:
+        if sub["_id"] in existing_sub_ids:
             skipped += 1
             continue
-        org = await organizations.find_one({"_id": sub["org_id"]})
-        plan = await plans_collection.find_one({"_id": sub["plan_code"]})
+        org = orgs_by_id.get(sub["org_id"])
+        plan = plans_by_code.get(sub["plan_code"])
         charge_id = new_id()
         await subscription_renewals.insert_one({
             "_id": charge_id,
@@ -99,7 +124,7 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
             "created_by": current_user["id"], "created_at": now(),
         })
         created += 1
-        owner_user = await users.find_one({"org_id": sub["org_id"], "role": "owner"})
+        owner_user = owner_by_org_id.get(sub["org_id"])
         if owner_user:
             await notify(
                 owner_user["_id"], "subscription_renewal_due",
