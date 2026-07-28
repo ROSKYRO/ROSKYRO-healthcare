@@ -155,8 +155,6 @@ async def run():
             "sort_order": 1,
         },
         {
-            # MANAGE + GROW together also unlock Networking Marketing (CONNECT)
-            # free as a bonus earning service -- see app/utils/bundle_bonus.py.
             "_id": "manage", "name": "MANAGE", "tagline": "Run your healthcare business efficiently with CRM, Appointments & Automation.",
             "monthly_price": 9999, "yearly_price": 95990, "badge": None,
             "description": "Day-to-day operations — CRM, appointments, queue, billing and communication in one place.",
@@ -395,12 +393,17 @@ async def run():
 
     # Give a couple of demo partners partner-audience pillar subscriptions,
     # so the partner-side Plans page has visible data -- CityScan gets
-    # GROW + Networking Marketing (which, per the bundle-bonus rule, would
-    # auto-grant MANAGE free when done through the real /partner-plans/
-    # subscribe endpoint; seeded directly here for determinism, so the free
-    # MANAGE row is inserted explicitly with the same is_free_addon shape
-    # that endpoint would produce). PuneLife gets GROW only, to also show
-    # what a single-pillar partner subscription looks like.
+    # GROW + Networking Marketing, plus a pre-existing free MANAGE row
+    # (source="bundle_bonus", is_free_addon=True). This represents a
+    # partner who was granted the free MANAGE bonus back when the "GROW +
+    # CONNECT -> MANAGE free" mechanic still existed -- that mechanic has
+    # since been retired (retired feature no longer grants new bonuses, see
+    # app/utils/bundle_bonus.py's module docstring) but per this
+    # engagement's conservative-removal principle, any bonus already
+    # granted before the retirement keeps it, so this row is seeded
+    # directly here (the real /partner-plans/subscribe endpoint would no
+    # longer produce it). PuneLife gets GROW only, to also show what a
+    # single-pillar partner subscription looks like.
     print("Seeding partner pillar subscriptions...")
     partner_subs = [
         (cityscan_diagnostics["org"], ["grow", "connect"], ["manage"]),
