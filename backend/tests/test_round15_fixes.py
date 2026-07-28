@@ -29,14 +29,33 @@ decisions from the user (not a routine bug-check round):
    that let the two pricing tabs show different numbers for the same
    service on the live site.
 
+3. HARDENED after being spotted live on roskyro.in: the "For Partners"
+   pricing tab was rendering a completely blank list in production (no
+   cards at all between the audience toggle and the Enterprise section),
+   and POST /partner-plans/subscribe 404'd as "Unknown plan." for a
+   perfectly valid code. Root cause: every read in routers/partner_plans.py
+   queried the partner_plans collection directly, and on the real
+   deployment that collection was never separately populated for every
+   code (unlike the mock/demo DB, where seed.py always deep-copies the
+   business catalog into it). Fixed by routing every catalog read in that
+   file through _effective_partner_plans_map(), which uses the business
+   `plans` collection as the guaranteed-populated base and only lets an
+   existing partner_plans doc override copy fields (never price). The
+   tests below simulate the production condition directly (temporarily
+   emptying partner_plans) to prove the fix, then restore the collection
+   so later tests in this run aren't affected.
+
 See test_business_partner_pricing.py for the companion tests covering the
 same two changes end-to-end via the subscribe/cancel and catalog-GET flows;
 this file focuses on the sync mechanism and dead-code removal specifically.
 """
 import itertools
 
+import pytest
+
 DEMO_PASSWORD = "Roskyro@123"
 ADMIN_EMAIL = "admin@roskyro.com"
+PUNELIFE_PARTNER_EMAIL = "admin.punelife.imaging.centre@example.com"  # partner_admin, seeded with only GROW active
 
 _reg_counter = itertools.count(1)
 
@@ -175,3 +194,89 @@ def test_patch_plan_still_requires_admin_role_after_sync_change(client, unique_s
 
     resp = client.patch("/api/partner-plans/grow", headers=headers, json={"tagline": "hacked"})
     assert resp.status_code == 403, resp.text
+
+
+# ---------------------------------------------------------------------------
+# HARDENING -- partner_plans collection empty/unpopulated (the actual bug
+# spotted live on roskyro.in). These simulate that production condition
+# directly against the shared session DB, and restore it afterward in a
+# try/finally so no later test in this run is affected.
+# ---------------------------------------------------------------------------
+
+async def _snapshot_and_empty_partner_plans():
+    from app.db import partner_plans
+    docs = await partner_plans.find({}).to_list(None)
+    await partner_plans.delete_many({})
+    return docs
+
+
+async def _restore_partner_plans(docs):
+    """Clears whatever the test itself inserted (e.g. an upsert from
+    patch_partner_plan) before restoring the original snapshot -- otherwise
+    a doc the test created for a code that was already in the snapshot
+    collides on insert_many with a duplicate _id."""
+    from app.db import partner_plans
+    await partner_plans.delete_many({})
+    if docs:
+        await partner_plans.insert_many(docs)
+
+
+@pytest.mark.asyncio
+async def test_partner_catalog_list_survives_empty_partner_plans_collection(client):
+    """The exact bug from the screenshot: an empty partner_plans collection
+    must NOT produce a blank "For Partners" pricing list -- it must fall
+    back to the (always-populated) business catalog, code-for-code."""
+    docs = await _snapshot_and_empty_partner_plans()
+    try:
+        resp = client.get("/api/partner-plans")
+        assert resp.status_code == 200, resp.text
+        plans = resp.json()["plans"]
+        codes = {p["code"] for p in plans}
+        assert codes == {"grow", "manage", "connect", "complete", "reels"}
+
+        business_by_code = {p["code"]: p for p in client.get("/api/plans").json()["plans"]}
+        for p in plans:
+            assert p["monthly_price"] == business_by_code[p["code"]]["monthly_price"]
+            assert p["yearly_price"] == business_by_code[p["code"]]["yearly_price"]
+    finally:
+        await _restore_partner_plans(docs)
+
+
+@pytest.mark.asyncio
+async def test_partner_subscribe_survives_empty_partner_plans_collection(client):
+    """The other half of the live bug: subscribing to a partner plan must
+    not 404 as "Unknown plan." just because partner_plans has no row for
+    it -- the business catalog is the real source of truth now."""
+    docs = await _snapshot_and_empty_partner_plans()
+    try:
+        partner_login = client.post("/api/auth/login", json={
+            "identifier": PUNELIFE_PARTNER_EMAIL, "password": DEMO_PASSWORD,
+        })
+        assert partner_login.status_code == 200, partner_login.text
+        headers = {"Authorization": f"Bearer {partner_login.json()['token']}"}
+
+        resp = client.post("/api/partner-plans/subscribe", json={"planCode": "reels"}, headers=headers)
+        assert resp.status_code in (201, 409), resp.text  # 409 if reels was already active from an earlier test run
+        if resp.status_code == 201:
+            client.post("/api/partner-plans/cancel", json={"planCode": "reels"}, headers=headers)  # clean up
+    finally:
+        await _restore_partner_plans(docs)
+
+
+@pytest.mark.asyncio
+async def test_patch_partner_plan_upserts_when_no_row_exists_yet(client):
+    """An admin editing partner-side copy for a code that has no
+    partner_plans row at all yet must not 404 -- it should create that row
+    (upsert) rather than requiring one to already exist."""
+    docs = await _snapshot_and_empty_partner_plans()
+    try:
+        headers = _login_admin(client)
+        resp = client.patch("/api/partner-plans/manage", headers=headers, json={"tagline": "Partner-only tagline"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["plan"]["tagline"] == "Partner-only tagline"
+        # Pricing must still come from the business catalog even on a
+        # freshly-upserted row.
+        business_manage = next(p for p in client.get("/api/plans").json()["plans"] if p["code"] == "manage")
+        assert resp.json()["plan"]["monthly_price"] == business_manage["monthly_price"]
+    finally:
+        await _restore_partner_plans(docs)
