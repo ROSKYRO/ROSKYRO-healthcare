@@ -15,9 +15,16 @@ export default function MarketingPayouts() {
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
+    // Fixed: a failed fetch used to silently render an EMPTY report
+    // ({ businesses: [], payout_percentage: 0 }) with no error shown --
+    // indistinguishable from "genuinely nothing to pay out this period".
+    // An ops user could conclude there's nothing owed when the real cause
+    // was a transient API failure, missing real payouts. Now a failure
+    // surfaces a real error instead of faking an empty-but-successful load.
+    setError('');
     api.get('/settlements/marketing-report', { params: { period } })
       .then((res) => setReport(res.data))
-      .catch(() => setReport({ businesses: [], payout_percentage: 0 }));
+      .catch(() => setError('Could not load the Marketing Fee report. Please try again.'));
   }, [period]);
 
   useEffect(load, [load]);
@@ -66,6 +73,15 @@ export default function MarketingPayouts() {
     } finally {
       setDownloadingId(null);
     }
+  }
+
+  if (error && !report) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!report) return <PageLoading />;

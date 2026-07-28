@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
+import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, Table, Badge, Button, Input, PageLoading, formatCurrency, formatDate, formatDateTime } from '../../components/ui';
 
 function currentMonth() {
@@ -8,6 +9,7 @@ function currentMonth() {
 }
 
 export default function SubscriptionRenewals() {
+  const { user } = useAuth();
   const [period, setPeriod] = useState(currentMonth());
   const [renewals, setRenewals] = useState(null);
   const [generating, setGenerating] = useState(false);
@@ -17,9 +19,14 @@ export default function SubscriptionRenewals() {
   const [lastGenerateResult, setLastGenerateResult] = useState(null);
 
   const load = useCallback(() => {
+    // Fixed: a failed fetch used to silently render an EMPTY renewals list
+    // with no error shown -- indistinguishable from "genuinely nothing due
+    // this period", so real pending/awaiting-confirmation renewals could
+    // go unnoticed on a transient API failure.
+    setError('');
     api.get('/subscription-renewals', { params: { period } })
       .then((res) => setRenewals(res.data.renewals))
-      .catch(() => setRenewals([]));
+      .catch(() => setError('Could not load renewal charges. Please try again.'));
   }, [period]);
 
   useEffect(load, [load]);
@@ -85,6 +92,15 @@ export default function SubscriptionRenewals() {
     }
   }
 
+  if (error && !renewals) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
+
   if (!renewals) return <PageLoading />;
 
   const totalCharged = renewals.reduce((sum, r) => sum + Number(r.amount), 0);
@@ -120,9 +136,20 @@ export default function SubscriptionRenewals() {
             </p>
           )}
         </div>
-        <Button disabled={generating} onClick={generateCharges}>
-          {generating ? 'Generating…' : 'Generate Renewal Charges'}
-        </Button>
+        {/* Fixed: this button was shown to every internal role (the route
+            is only gated to `allow={['internal']}`, any of 10 roles), but
+            the backend's POST /subscription-renewals/generate is
+            roskyro_admin-only -- so any of the other 9 roles (ops manager,
+            growth expert, support executive, etc.) could see and click it,
+            and it would always fail with a generic error. Now hidden for
+            non-admins, mirroring PasswordRequests.jsx's existing pattern. */}
+        {user.role === 'roskyro_admin' ? (
+          <Button disabled={generating} onClick={generateCharges}>
+            {generating ? 'Generating…' : 'Generate Renewal Charges'}
+          </Button>
+        ) : (
+          <p className="text-xs text-gray-400">Only a ROSKYRO super admin can generate renewal charges.</p>
+        )}
       </Card>
 
       <div className="grid md:grid-cols-3 gap-5">

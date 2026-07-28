@@ -8,6 +8,13 @@ export default function WhatsappQueue() {
   const [error, setError] = useState('');
 
   const load = useCallback(() => {
+    // Fixed: this never cleared a prior error at the start of a reload --
+    // so after an initial failed load followed by a successful Retry, the
+    // stale "Could not load..." banner kept rendering above the
+    // now-successfully-loaded queue table, permanently misleading the ops
+    // user into thinking the page is still broken. Every sibling internal
+    // page's load() clears error first; this one didn't.
+    setError('');
     api.get('/whatsapp/queue').then((res) => setQueue(res.data.queue)).catch(() => {
       setError('Could not load the WhatsApp queue. Please try again.');
     });
