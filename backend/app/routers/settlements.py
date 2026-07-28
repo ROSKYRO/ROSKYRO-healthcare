@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from app.db import settlement_rules, settlements, referrals, organizations, partners, partner_categories, statements, platform_settings, marketing_payouts, subscription_renewals
 from app.auth import get_current_user, require_internal, require_roles
@@ -215,6 +216,17 @@ async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_u
         raise HTTPException(status_code=400, detail="Invalid scope.")
     if body.scope == "category" and not body.categoryId:
         raise HTTPException(status_code=400, detail="categoryId is required for the category scope.")
+    # Fixed: only "category" was validated here -- an admin submitting
+    # scope="org"/"partner"/"org_partner_pair" without the matching id(s)
+    # silently created an inert rule (org_id/partner_id stored as None)
+    # that can never match anything in transition_referral's resolution
+    # loop (referrals.py), a silent no-op rather than a clear rejection.
+    if body.scope == "org" and not body.orgId:
+        raise HTTPException(status_code=400, detail="orgId is required for the org scope.")
+    if body.scope == "partner" and not body.partnerId:
+        raise HTTPException(status_code=400, detail="partnerId is required for the partner scope.")
+    if body.scope == "org_partner_pair" and not (body.orgId and body.partnerId):
+        raise HTTPException(status_code=400, detail="orgId and partnerId are both required for the org_partner_pair scope.")
     # Percentage-based settlement has been removed entirely -- Referral
     # Bonus is always a flat rupee amount (or "none"/"custom").
     if body.settlementType not in ("none", "flat_fee", "custom"):
@@ -227,20 +239,38 @@ async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_u
     if body.settlementType == "flat_fee" and (body.flatFeeAmount is None or body.flatFeeAmount < 0):
         raise HTTPException(status_code=400, detail="flatFeeAmount must be a non-negative number for the flat_fee settlement type.")
 
+    # Fixed: this dedup-the-old-active-rule step used to run ONLY for
+    # scope="category" -- for "partner"/"org"/"org_partner_pair" this
+    # endpoint inserted a brand-new active row unconditionally, with no
+    # check for (or deactivation of) an already-active rule targeting the
+    # same partner/org/pair. That's not a rare edge case: /my-rate (a
+    # partner self-setting their own rate) already creates an active
+    # scope="partner" row, and this generic admin endpoint is the ONLY way
+    # to add an admin override for that same partner -- so using it as
+    # intended left two simultaneously-active scope="partner" rows for one
+    # partner_id. transition_referral's resolution loop (referrals.py) then
+    # does a plain find_one({..., "is_active": True}) with no sort, so
+    # which of the two rules gets applied -- and therefore what Marketing
+    # Fee amount gets charged -- was non-deterministic. Now every scope
+    # dedupes its own prior active row on the same target, same as
+    # "category" already did.
+    # "platform" has no target id at all -- every active platform rule is
+    # the same singleton default, so the filter below naturally reduces to
+    # just {"scope": "platform", "is_active": True} for it.
+    dedup_filter = {"scope": body.scope, "is_active": True}
     if body.scope == "category":
-        # Guard against ending up with two simultaneously-active "category"
-        # rules for the same category_id -- set_category_rate (the PUT
-        # /category-rates/{id} endpoint the admin UI actually uses) already
-        # upserts safely, but this generic endpoint used to insert
-        # unconditionally, so a rule created here could silently coexist
-        # with one later edited via the UI. The referral-completion
-        # resolution loop's find_one({"scope": "category", ...}) would then
-        # return whichever of the two Mongo happens to pick, independently
-        # of what the admin UI last showed as saved.
-        await settlement_rules.update_many(
-            {"scope": "category", "category_id": body.categoryId, "is_active": True},
-            {"$set": {"is_active": False, "updated_at": now()}},
-        )
+        dedup_filter["category_id"] = body.categoryId
+    elif body.scope == "partner":
+        dedup_filter["partner_id"] = body.partnerId
+    elif body.scope == "org":
+        dedup_filter["org_id"] = body.orgId
+    elif body.scope == "org_partner_pair":
+        dedup_filter["org_id"] = body.orgId
+        dedup_filter["partner_id"] = body.partnerId
+    await settlement_rules.update_many(
+        dedup_filter,
+        {"$set": {"is_active": False, "updated_at": now()}},
+    )
 
     doc = {
         "_id": new_id(), "scope": body.scope, "org_id": body.orgId, "partner_id": body.partnerId,
@@ -553,7 +583,21 @@ async def create_marketing_payout(body: CreatePayoutBody, current_user: dict = D
         "status": "pending", "paid_at": None,
         "created_by": current_user["id"], "created_at": now(),
     }
-    await marketing_payouts.insert_one(doc)
+    try:
+        await marketing_payouts.insert_one(doc)
+    except DuplicateKeyError:
+        # Fixed: the find_one check above and this insert are two separate
+        # steps with no atomicity between them -- two concurrent "Create
+        # Payout" calls for the same org+period could both pass the check
+        # (neither payout exists yet), both compute the same
+        # total_collected from the same not-yet-tagged settlements, and
+        # both insert -- which, before the unique (org_id, period) index
+        # backing this except block existed, meant ROSKYRO could generate
+        # (and then mark paid) TWO payouts for the same business/period,
+        # double-paying out the same collected Marketing Fees. Same
+        # backstop pattern as settlements.referral_id and
+        # subscription_renewals.(subscription_id, period) in db_indexes.py.
+        raise HTTPException(status_code=400, detail="A payout for this business and period already exists.")
     await settlements.update_many(
         {"_id": {"$in": [s["_id"] for s in matching]}},
         {"$set": {"included_in_payout_id": payout_id}},

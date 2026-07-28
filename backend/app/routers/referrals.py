@@ -467,14 +467,23 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
             "note": "Review report with patient and confirm next steps.",
             "status": "pending", "created_by": current_user["id"], "created_at": now(),
         })
-        await partners.update_one({"_id": referral["partner_id"]}, {
-            "$inc": {"total_referrals_completed": 1}, "$set": {"updated_at": now()},
-        })
     if body.status == "accepted":
         await partners.update_one({"_id": referral["partner_id"]}, {
             "$inc": {"total_referrals_received": 1}, "$set": {"updated_at": now()},
         })
     if body.status == "completed":
+        # Fixed: this counter used to be incremented on "report_uploaded"
+        # instead of "completed" -- but per TRANSITIONS above,
+        # report_uploaded's only next step is completed, and a referral can
+        # sit at report_uploaded indefinitely (there's no further transition
+        # out of it besides completed). So a referral that never actually
+        # gets marked completed was already counted as "completed" in this
+        # partner's stats -- which feed directly into partners.py's
+        # AI-score ranking shown to businesses choosing a partner, over-
+        # crediting partners for referrals that aren't done yet.
+        await partners.update_one({"_id": referral["partner_id"]}, {
+            "$inc": {"total_referrals_completed": 1}, "$set": {"updated_at": now()},
+        })
         # Generate settlement if a rule applies (resolution order:
         # org_partner_pair > partner > org > category > platform default
         # 'none'). "category" sits between the business-specific "org"
