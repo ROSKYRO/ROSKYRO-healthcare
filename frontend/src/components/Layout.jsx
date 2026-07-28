@@ -45,6 +45,7 @@ const NAV = {
     { to: '/partner/requests', label: 'Referral Requests', icon: '\u{1F4E5}' },
     { to: '/partner/partnerships', label: 'Partnerships', icon: '\u{2B50}' },
     { to: '/partner/wallet', label: 'Wallet', icon: '\u{1F4B0}' },
+    { to: '/partner/plans', label: 'Plans & Billing', icon: '\u{1F4B3}' },
   ],
   internal: [
     { to: '/team', label: 'Team Dashboard', icon: '\u{1F3E2}', end: true },

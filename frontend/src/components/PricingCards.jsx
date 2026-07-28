@@ -21,7 +21,11 @@ export default function PricingCards({
   showCycleToggle = true,
 }) {
   const [cycle, setCycle] = useState('monthly');
-  const sorted = [...plans].sort((a, b) => a.sort_order - b.sort_order);
+  // Add-ons (e.g. "Reel Making") are optional extras, not one of the core
+  // pillars/bundle -- they're never part of this grid or the bundle-savings
+  // math, and pages that want to offer them render their own separate card
+  // (see the `plans` array passed in still contains them, for that purpose).
+  const sorted = [...plans].filter((p) => !p.is_addon).sort((a, b) => a.sort_order - b.sort_order);
   const priceField = cycle === 'yearly' ? 'yearly_price' : 'monthly_price';
   const individualTotal = sorted
     .filter((p) => !p.is_bundle)
