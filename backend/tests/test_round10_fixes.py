@@ -12,6 +12,19 @@ on it. Same class of gap already fixed for doctors.py/appointments.py/
 booking_settings.py in earlier rounds -- an admin-side write with no
 numeric check breaking an unrelated, customer/partner-facing read path
 later.
+
+SUPERSEDED (round 15): per explicit product request, partner pricing was
+made permanently non-editable on its own -- PATCH /partner-plans/{code}
+no longer accepts monthlyPrice/yearlyPrice at all; pricing changes only
+ever flow from PATCH /plans/{code} (the business catalog, now the single
+source of truth for pricing), which propagates monthly_price/yearly_price
+into the matching partner_plans doc automatically. The business-side
+(plans.py) numeric-validation tests below are still fully valid and
+unchanged. The partner-side price-validation tests below have been
+rewritten to assert the new reality (price fields silently ignored on
+that endpoint) rather than deleted, so the history of what changed and
+why stays in one place -- see test_round15_fixes.py for the full sync
+mechanism's own regression tests.
 """
 import pytest
 
@@ -34,7 +47,11 @@ def _restore_plan_price(client, headers, code, monthly_price, yearly_price):
 
 
 def _restore_partner_plan_price(client, headers, code, monthly_price, yearly_price):
-    client.patch(f"/api/partner-plans/{code}", headers=headers, json={
+    """Restore via the BUSINESS-side endpoint now -- partner-side price
+    fields are no longer independently settable (round 15), so the only
+    way to move the partner catalog's price is through the sync that
+    PATCH /plans/{code} triggers."""
+    client.patch(f"/api/plans/{code}", headers=headers, json={
         "monthlyPrice": monthly_price, "yearlyPrice": yearly_price,
     })
 
@@ -99,48 +116,50 @@ def test_patch_plan_bad_price_does_not_corrupt_catalog_or_crash_subscriptions(cl
 
 # ---------------------------------------------------------------------------
 # partner_plans.py -- patch_partner_plan()
+#
+# SUPERSEDED (round 15): monthlyPrice/yearlyPrice are no longer in
+# EDITABLE_PLAN_FIELDS_CAMEL for this endpoint at all -- a body containing
+# only price fields now yields the generic "No editable fields provided"
+# 400, and the numeric-validation logic these original tests exercised has
+# moved entirely to plans.py's patch_plan() (still covered by the
+# business-side tests above). These tests now assert THAT new behavior
+# instead of the retired one.
 # ---------------------------------------------------------------------------
 
-def test_patch_partner_plan_rejects_non_numeric_monthly_price(client):
+def test_patch_partner_plan_ignores_monthly_price_field(client):
     headers = _login(client, ADMIN_EMAIL)
     resp = client.patch("/api/partner-plans/reels", headers=headers, json={"monthlyPrice": "abc"})
     assert resp.status_code == 400, resp.text
-    assert "monthly_price" in resp.json()["error"].lower()
-    assert "numeric" in resp.json()["error"].lower()
+    assert "no editable fields" in resp.json()["error"].lower()
 
 
-def test_patch_partner_plan_rejects_non_numeric_yearly_price(client):
+def test_patch_partner_plan_ignores_yearly_price_field(client):
     headers = _login(client, ADMIN_EMAIL)
     resp = client.patch("/api/partner-plans/reels", headers=headers, json={"yearlyPrice": "xyz"})
     assert resp.status_code == 400, resp.text
-    assert "yearly_price" in resp.json()["error"].lower()
+    assert "no editable fields" in resp.json()["error"].lower()
 
 
-def test_patch_partner_plan_accepts_numeric_string_price(client):
+def test_patch_partner_plan_still_allows_copy_fields(client):
+    """Non-price fields (name/tagline/etc.) are still editable directly on
+    the partner catalog -- only pricing became business-side-only."""
     headers = _login(client, ADMIN_EMAIL)
-    resp = client.patch("/api/partner-plans/reels", headers=headers, json={"monthlyPrice": "7100"})
+    resp = client.patch("/api/partner-plans/reels", headers=headers, json={"tagline": "Reels for partners"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["plan"]["monthly_price"] == 7100.0
-    _restore_partner_plan_price(client, headers, "reels", 6999, 67190)
+    assert resp.json()["plan"]["tagline"] == "Reels for partners"
 
 
-def test_patch_partner_plan_accepts_real_numbers(client):
-    headers = _login(client, ADMIN_EMAIL)
-    resp = client.patch("/api/partner-plans/reels", headers=headers, json={"monthlyPrice": 7300, "yearlyPrice": 70000})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["plan"]["monthly_price"] == 7300.0
-    assert resp.json()["plan"]["yearly_price"] == 70000.0
-    _restore_partner_plan_price(client, headers, "reels", 6999, 67190)
-
-
-def test_patch_partner_plan_bad_price_does_not_corrupt_catalog(client):
+def test_patch_partner_plan_price_fields_do_not_corrupt_catalog(client):
+    """Even a mixed body (a valid editable field alongside price fields)
+    must not let the price fields sneak through -- price stays whatever it
+    was, only the editable field changes."""
     headers = _login(client, ADMIN_EMAIL)
     before = client.get("/api/partner-plans")
     assert before.status_code == 200, before.text
     before_price = next(p["monthly_price"] for p in before.json()["plans"] if p["code"] == "reels")
 
-    resp = client.patch("/api/partner-plans/reels", headers=headers, json={"monthlyPrice": "abc"})
-    assert resp.status_code == 400, resp.text
+    resp = client.patch("/api/partner-plans/reels", headers=headers, json={"tagline": "Reels", "monthlyPrice": "abc"})
+    assert resp.status_code == 200, resp.text
 
     after = client.get("/api/partner-plans")
     assert after.status_code == 200, after.text
