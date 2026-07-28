@@ -14,7 +14,7 @@ from app.routers import (
     auth, orgs, partners, referrals, settlements, tasks, dashboard, notifications,
     approvals, appointments, reviews, reports, plans, patients, queue, followups,
     billing, whatsapp, settings, booking_settings, public_booking, doctors, public_marketing,
-    password_resets, subscription_renewals, partnerships,
+    password_resets, subscription_renewals, partnerships, partner_plans,
 )
 
 app = FastAPI(title="ROSKYRO Healthcare OS API")
@@ -114,6 +114,7 @@ app.include_router(appointments.router)
 app.include_router(reviews.router)
 app.include_router(reports.router)
 app.include_router(plans.router)
+app.include_router(partner_plans.router)
 app.include_router(patients.router)
 app.include_router(queue.router)
 app.include_router(followups.router)

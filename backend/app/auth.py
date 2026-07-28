@@ -6,7 +6,7 @@ from passlib.context import CryptContext
 from app.config import JWT_SECRET, JWT_ALGORITHM, JWT_EXPIRES_DAYS
 from app.db import users, organizations
 from app.utils.roles import app_shell_for, is_internal
-from app.utils.pillars import get_active_pillars
+from app.utils.pillars import get_active_pillars, get_active_partner_pillars
 from app.utils.ids import now
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -49,7 +49,12 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         org = await organizations.find_one({"_id": user["org_id"]})
 
     app_shell = app_shell_for(user["role"])
-    active_pillars = await get_active_pillars(user.get("org_id")) if app_shell == "customer" else set()
+    if app_shell == "customer":
+        active_pillars = await get_active_pillars(user.get("org_id"))
+    elif app_shell == "partner":
+        active_pillars = await get_active_partner_pillars(user.get("org_id"))
+    else:
+        active_pillars = set()
 
     return {
         "id": user["_id"],
@@ -64,6 +69,7 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
         "avatarUrl": user.get("avatar_url"),
         "orgName": org.get("name") if org else None,
         "businessType": org.get("business_type") if org else None,
+        "businessCategory": org.get("business_category") if org else None,
         "isPartner": org.get("is_partner") if org else None,
         "subscriptionPlan": org.get("subscription_plan") if org else None,
         "appShell": app_shell,

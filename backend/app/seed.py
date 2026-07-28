@@ -22,6 +22,7 @@ from app.db import (
     patients, queue_entries, patient_followups, invoices, whatsapp_messages,
     partner_agreements, team_performance, statements, referral_followups,
     booking_settings, doctors, booking_counters, password_reset_requests,
+    partner_plans as partner_plans_collection, partner_subscriptions,
 )
 from app.auth import hash_password
 from app.utils.ids import new_id
@@ -136,6 +137,7 @@ async def run():
         whatsapp_messages, invoices, patient_followups, queue_entries, patients,
         booking_settings, doctors, booking_counters,
         organization_subscriptions, plans_collection,
+        partner_subscriptions, partner_plans_collection,
         users, organizations, password_reset_requests,
     ):
         await col.delete_many({})
@@ -148,17 +150,19 @@ async def run():
             "description": "AI + human patient growth engine — visibility, reviews, SEO and content, all managed for you.",
             "best_for": "Doctors, Clinics, Diagnostic Labs, Hospitals",
             "customer_promise": "Hum marketing nahi, patient growth par kaam karte hain.",
-            "is_bundle": False, "bundle_pillars": None,
+            "is_bundle": False, "bundle_pillars": None, "is_addon": False, "requires_pillar": None,
             "features": ["AI Visibility Management", "Google Business Profile", "Review Growth", "Local SEO", "AI Search Optimization", "Social Media Management", "Content Creation", "Digital Marketing", "Monthly Growth Reports"],
             "sort_order": 1,
         },
         {
+            # MANAGE + GROW together also unlock Networking Marketing (CONNECT)
+            # free as a bonus earning service -- see app/utils/bundle_bonus.py.
             "_id": "manage", "name": "MANAGE", "tagline": "Run your healthcare business efficiently with CRM, Appointments & Automation.",
             "monthly_price": 9999, "yearly_price": 95990, "badge": None,
             "description": "Day-to-day operations — CRM, appointments, queue, billing and communication in one place.",
             "best_for": "Clinics & Hospitals with growing patient volume",
             "customer_promise": "Hum aapke operations ko simple aur organized banate hain.",
-            "is_bundle": False, "bundle_pillars": None,
+            "is_bundle": False, "bundle_pillars": None, "is_addon": False, "requires_pillar": None,
             "features": ["Patient CRM", "Appointment Management", "Queue Management", "Follow-ups", "Billing", "WhatsApp Communication", "Reports", "AI + Human Support"],
             "sort_order": 2,
         },
@@ -168,7 +172,7 @@ async def run():
             "description": "The ROSKYRO Healthcare Referral & Partner Network — trusted partners, tracked referrals, configurable settlements.",
             "best_for": "Clinics, Hospitals, Labs & Healthcare Businesses",
             "customer_promise": "Hum aapko trusted healthcare partners se jodte hain.",
-            "is_bundle": False, "bundle_pillars": None,
+            "is_bundle": False, "bundle_pillars": None, "is_addon": False, "requires_pillar": None,
             "features": ["Partner Directory", "Partner Network", "Service Requests", "Business Collaborations", "Analytics", "Digital Documents", "Opportunity Tracking"],
             "sort_order": 3,
         },
@@ -178,13 +182,41 @@ async def run():
             "description": "Everything ROSKYRO offers, at a bundled price — one team, one dashboard, one bill.",
             "best_for": "Multi-speciality Clinics, Hospitals & Healthcare Groups",
             "customer_promise": "Aapka poora digital business team, ek jagah.",
-            "is_bundle": True, "bundle_pillars": ["grow", "manage", "connect"],
+            "is_bundle": True, "bundle_pillars": ["grow", "manage", "connect"], "is_addon": False, "requires_pillar": None,
             "features": ["Dedicated Success Manager", "Priority Support", "Monthly Strategy Review", "Complete Healthcare Growth Platform"],
             "sort_order": 4,
+        },
+        {
+            # Optional add-on, not a pillar -- only purchasable while GROW is
+            # active (see requires_pillar, enforced in routers/plans.py's
+            # subscribe(), and auto-cancelled if GROW is ever cancelled, see
+            # cascade_cancel_dependent_addons in app/utils/bundle_bonus.py).
+            "_id": "reels", "name": "Reel Making", "tagline": "Short-form video content for Instagram/YouTube Shorts, as part of your Social Media Management.",
+            "monthly_price": 6999, "yearly_price": 67190, "badge": None,
+            "description": "Scripted, shot and edited short-form reels every month, published as part of your GROW social media calendar.",
+            "best_for": "GROW subscribers who want video content, not just posts",
+            "customer_promise": "Har mahine ready-to-post reels — bina khud shoot/edit kiye.",
+            "is_bundle": False, "bundle_pillars": None, "is_addon": True, "requires_pillar": "grow",
+            "features": ["Monthly reel scripting", "Shooting coordination", "Editing & captions", "Trending audio selection", "Published as part of Social Media Management"],
+            "sort_order": 5,
         },
     ]
     await plans_collection.insert_many(plan_docs)
     monthly_price_by_code = {p["_id"]: p["monthly_price"] for p in plan_docs}
+
+    print("Seeding partner-audience pricing plans...")
+    # Partner-audience mirror of plan_docs above -- per explicit instruction,
+    # EVERYTHING (services, copy, and pricing) is identical to the business
+    # catalog, just stored in its own collection (so subscriptions stay
+    # tracked separately per audience, and ROSKYRO can still diverge them
+    # later from /team/pricing if ever needed -- but they start out, and by
+    # default stay, byte-for-byte the same). Partner rule: GROW + Networking
+    # Marketing (CONNECT) together unlock MANAGE free (the mirror image of
+    # the business bonus rule above, which is MANAGE + GROW -> CONNECT free).
+    import copy
+    partner_plan_docs = copy.deepcopy(plan_docs)
+    await partner_plans_collection.insert_many(partner_plan_docs)
+    partner_monthly_price_by_code = {p["_id"]: p["monthly_price"] for p in partner_plan_docs}
 
     print("Seeding partner categories...")
     cat_ids = {}
@@ -228,10 +260,15 @@ async def run():
     # -----------------------------------------------------------------
     print("Seeding customer organizations + users...")
 
-    async def make_org(name, business_type, city, state, is_partner):
+    async def make_org(name, business_type, city, state, is_partner, business_category="clinic"):
         org_id = new_id()
         doc = {
-            "_id": org_id, "name": name, "business_type": business_type, "city": city, "state": state,
+            "_id": org_id, "name": name, "business_type": business_type,
+            # solo_doctor / clinic / hospital -- size/scale classification,
+            # separate from business_type (specialty). See BUSINESS_CATEGORIES
+            # in routers/auth.py.
+            "business_category": business_category,
+            "city": city, "state": state,
             "phone": f"+91-98{random.randint(10000000, 99999999)}",
             "email": "".join(c if c.isalnum() else "." for c in name.lower()).strip(".") + "@example.com",
             "subscription_plan": random.choice(["starter", "growth", "scale"]),
@@ -242,10 +279,10 @@ async def run():
         await organizations.insert_one(doc)
         return doc
 
-    sunrise_clinic = await make_org("Sunrise Family Clinic", "clinic", "Pune", "Maharashtra", False)
-    smile_dental = await make_org("Smile Bright Dental", "dental", "Pune", "Maharashtra", False)
-    vital_skin = await make_org("Vital Skin & Aesthetics", "skin_clinic", "Mumbai", "Maharashtra", False)
-    active_life_physio = await make_org("ActiveLife Physiotherapy", "physiotherapy", "Bengaluru", "Karnataka", True)
+    sunrise_clinic = await make_org("Sunrise Family Clinic", "clinic", "Pune", "Maharashtra", False, "clinic")
+    smile_dental = await make_org("Smile Bright Dental", "dental", "Pune", "Maharashtra", False, "clinic")
+    vital_skin = await make_org("Vital Skin & Aesthetics", "skin_clinic", "Mumbai", "Maharashtra", False, "solo_doctor")
+    active_life_physio = await make_org("ActiveLife Physiotherapy", "physiotherapy", "Bengaluru", "Karnataka", True, "clinic")
 
     org_owners = {}
     for org, doctor_name in [
@@ -355,6 +392,34 @@ async def run():
         [{"name": "Emergency Cardiology Consult", "description": "", "price": 1500},
          {"name": "ECG & Stress Test", "description": "", "price": 1200}],
     )
+
+    # Give a couple of demo partners partner-audience pillar subscriptions,
+    # so the partner-side Plans page has visible data -- CityScan gets
+    # GROW + Networking Marketing (which, per the bundle-bonus rule, would
+    # auto-grant MANAGE free when done through the real /partner-plans/
+    # subscribe endpoint; seeded directly here for determinism, so the free
+    # MANAGE row is inserted explicitly with the same is_free_addon shape
+    # that endpoint would produce). PuneLife gets GROW only, to also show
+    # what a single-pillar partner subscription looks like.
+    print("Seeding partner pillar subscriptions...")
+    partner_subs = [
+        (cityscan_diagnostics["org"], ["grow", "connect"], ["manage"]),
+        (punelife_mri["org"], ["grow"], []),
+    ]
+    for org, paid_codes, free_bonus_codes in partner_subs:
+        for code in paid_codes:
+            await partner_subscriptions.insert_one({
+                "_id": new_id(), "org_id": org["_id"], "plan_code": code, "status": "active",
+                "source": "signup", "activated_by": None, "billing_cycle": "monthly",
+                "price_at_purchase": partner_monthly_price_by_code[code], "started_at": now(),
+                "cancelled_at": None, "is_free_addon": False,
+            })
+        for code in free_bonus_codes:
+            await partner_subscriptions.insert_one({
+                "_id": new_id(), "org_id": org["_id"], "plan_code": code, "status": "active",
+                "source": "bundle_bonus", "activated_by": None, "billing_cycle": "monthly",
+                "price_at_purchase": 0, "started_at": now(), "cancelled_at": None, "is_free_addon": True,
+            })
 
     # ActiveLife Physio is itself both a customer and a network partner (physio category)
     active_life_partner_id = new_id()

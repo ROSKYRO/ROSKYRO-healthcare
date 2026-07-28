@@ -31,7 +31,7 @@ from app.db import (
     booking_settings, patients, queue_entries, patient_followups, invoices,
     whatsapp_messages, partner_agreements, doctors, password_reset_requests,
     newsletter_subscribers, contact_leads, subscription_renewals,
-    partnerships, partnership_requests,
+    partnerships, partnership_requests, partner_subscriptions,
 )
 
 # (collection, [index specs]) -- each spec is either a single field name
@@ -62,6 +62,7 @@ _INDEX_PLAN = [
     (tasks, ["assigned_to", "assigned_role", "status", "priority"]),
     (reports, ["org_id"]),
     (organization_subscriptions, [[("org_id", 1), ("status", 1)], [("org_id", 1), ("plan_code", 1)], "status"]),
+    (partner_subscriptions, [[("org_id", 1), ("status", 1)], [("org_id", 1), ("plan_code", 1)], "status"]),
     (subscription_renewals, [[("org_id", 1), ("period", 1)], [("subscription_id", 1), ("period", 1)], "status"]),
     (booking_settings, ["org_id"]),
     (patients, [[("org_id", 1), ("updated_at", -1)], "name", "phone"]),

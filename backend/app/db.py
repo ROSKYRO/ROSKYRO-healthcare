@@ -42,6 +42,18 @@ reports = db["reports"]
 audit_logs = db["audit_logs"]
 plans = db["plans"]
 organization_subscriptions = db["organization_subscriptions"]
+# Partner-audience mirror of plans/organization_subscriptions above -- the
+# ROSKYRO Networking Marketing side now also sells GROW/MANAGE/CONNECT as
+# real recurring subscriptions (its own pricing, kept in this SEPARATE
+# collection so the business-audience catalog in `plans` above is never
+# touched), plus optional add-ons (see the "reels" add-on plan). Kept as
+# distinct collections from the business ones rather than a shared
+# collection with an `audience` field, specifically so nothing already
+# reading/writing `plans`/`organization_subscriptions` for the business
+# side has to change or risks accidentally leaking a partner-priced row
+# into a business query (or vice versa).
+partner_plans = db["partner_plans"]
+partner_subscriptions = db["partner_subscriptions"]
 # Per-period renewal charges for an active subscription -- the SAME
 # pending -> business self-reports paid -> ROSKYRO confirms received ->
 # invoice lifecycle the Marketing Fee side already uses (settlements ->
