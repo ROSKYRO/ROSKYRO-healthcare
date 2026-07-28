@@ -1,12 +1,19 @@
-from fastapi import APIRouter, HTTPException
+import re
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 from pymongo import ReturnDocument
 
 from app.db import organizations, booking_settings, appointments, booking_counters, doctors
 from app.utils.booking import doctor_slots_for_date, upcoming_dates
 from app.utils.ids import new_id, now, to_out
 from app.utils.counters import next_sequence
+from app.utils.phone import normalize_phone
+from app.utils.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/api/public/booking", tags=["public-booking"])
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # This whole router is intentionally public / no-auth: it's what a patient
 # hits after scanning the QR code at the clinic's front desk. Nothing here
@@ -96,8 +103,22 @@ async def get_doctor_availability(org_id: str, doctor_id: str):
     }
 
 
+class BookSlotBody(BaseModel):
+    # Typed + max_length-capped -- this used to be a raw `body: dict` with
+    # `(body.get("field") or "").strip()`, which raised an unhandled
+    # AttributeError/TypeError (-> raw 500) whenever a field was sent as a
+    # non-string JSON value (e.g. {"patientName": 12345}). FastAPI now
+    # rejects that with a clean 422 before the handler runs.
+    patientName: str = Field(..., max_length=200)
+    patientPhone: str = Field(..., max_length=20)
+    doctorId: str
+    appointmentDate: str
+    appointmentTime: str
+    note: str | None = Field(None, max_length=2000)
+
+
 @router.post("/{org_id}/book", status_code=201)
-async def book_slot(org_id: str, body: dict):
+async def book_slot(org_id: str, body: BookSlotBody, request: Request = None):
     """Patient submits their own details, picks a doctor + date + time, and
     is queued in order for that doctor. Called by the frontend only after
     the patient has been shown the clinic's UPI ID and self-confirmed
@@ -116,21 +137,35 @@ async def book_slot(org_id: str, body: dict):
     multispeciality hospital each doctor runs their own independent queue,
     so "line se booking hoti jayegi" means each doctor's own line, not one
     shared line across every faculty member."""
-    patient_name = (body.get("patientName") or "").strip()
-    patient_phone = (body.get("patientPhone") or "").strip()
-    doctor_id = body.get("doctorId")
-    appointment_date = body.get("appointmentDate")
-    appointment_time = body.get("appointmentTime")
-    note = (body.get("note") or "").strip()
+    client_ip = request.client.host if (request and request.client) else "unknown"
+    enforce_rate_limit("public_booking", client_ip)
+
+    patient_name = body.patientName.strip()
+    # Normalized + length-checked the same way auth.py's register/login
+    # already validate a phone -- this previously stored whatever raw
+    # string was submitted (any length, any characters), unlike every
+    # other phone entry point in the app.
+    patient_phone = normalize_phone(body.patientPhone)
+    doctor_id = body.doctorId
+    appointment_date = body.appointmentDate
+    appointment_time = body.appointmentTime
+    note = (body.note or "").strip()
 
     if not patient_name:
         raise HTTPException(status_code=400, detail="Your name is required.")
-    if not patient_phone:
-        raise HTTPException(status_code=400, detail="Your phone number is required.")
+    if len(patient_phone) != 10:
+        raise HTTPException(status_code=400, detail="Please enter a valid 10-digit phone number.")
     if not doctor_id:
         raise HTTPException(status_code=400, detail="Please choose a doctor.")
     if not appointment_date or not appointment_time:
         raise HTTPException(status_code=400, detail="Please choose a date and time slot.")
+    # Fixed: date-format validation must happen BEFORE doctor_slots_for_date
+    # is called below, since that function's day_key_for_date() calls
+    # datetime.strptime(date_str, "%Y-%m-%d") with no guard -- an
+    # unparseable date previously raised an unhandled ValueError (-> raw
+    # 500) instead of the intended clean 400.
+    if not _DATE_RE.match(appointment_date):
+        raise HTTPException(status_code=400, detail="That date is outside the booking window.")
 
     org, settings = await _load_org_and_settings(org_id)
 
@@ -138,12 +173,12 @@ async def book_slot(org_id: str, body: dict):
     if not doctor:
         raise HTTPException(status_code=404, detail="This doctor is not available for booking right now.")
 
-    valid_slots = doctor_slots_for_date(doctor, appointment_date)
-    if appointment_time not in valid_slots:
-        raise HTTPException(status_code=400, detail="That is not a valid time slot for this doctor.")
     valid_dates = upcoming_dates(settings["booking_window_days"])
     if appointment_date not in valid_dates:
         raise HTTPException(status_code=400, detail="That date is outside the booking window.")
+    valid_slots = doctor_slots_for_date(doctor, appointment_date)
+    if appointment_time not in valid_slots:
+        raise HTTPException(status_code=400, detail="That is not a valid time slot for this doctor.")
 
     capacity = doctor.get("capacity_per_slot") or 1
     slot_key = f"slot|{org_id}|{doctor_id}|{appointment_date}|{appointment_time}"

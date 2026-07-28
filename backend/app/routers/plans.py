@@ -3,7 +3,10 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.db import plans as plans_collection, organization_subscriptions, organizations, users
 from app.auth import get_current_user, require_internal, require_roles
 from app.utils.plans import get_active_pillars, next_renewal_date
-from app.utils.bundle_bonus import apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons
+from app.utils.bundle_bonus import (
+    apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons,
+    find_active_bundle_covering_pillar,
+)
 from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
@@ -217,6 +220,19 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
         existing = await organization_subscriptions.find_one({"org_id": target_org_id, "plan_code": plan_code, "status": "active"})
         if existing:
             raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this business.")
+        # Fixed double-billing bug: the check above only caught a duplicate
+        # of the SAME plan_code -- it never checked whether an active BUNDLE
+        # (e.g. "complete") already covers this pillar. Without this, a
+        # business on "complete" (₹24,999/mo, includes grow+manage+connect)
+        # could separately subscribe to "grow" (₹14,999/mo) and get billed
+        # for both at once, since no "grow" row existed yet to trip the
+        # check above.
+        covering_bundle = await find_active_bundle_covering_pillar(organization_subscriptions, plans_collection, target_org_id, plan_code)
+        if covering_bundle:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{plan['name']} is already included in your active {covering_bundle['name']} bundle.",
+            )
 
     doc = {
         "_id": new_id(), "org_id": target_org_id, "plan_code": plan_code, "status": "active",

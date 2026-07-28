@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from app.db import subscription_renewals, organization_subscriptions, organizations, plans as plans_collection, users
 from app.auth import get_current_user, require_internal, require_roles
@@ -110,19 +111,30 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
         org = orgs_by_id.get(sub["org_id"])
         plan = plans_by_code.get(sub["plan_code"])
         charge_id = new_id()
-        await subscription_renewals.insert_one({
-            "_id": charge_id,
-            "org_id": sub["org_id"], "org_name": org.get("name") if org else None,
-            "subscription_id": sub["_id"], "plan_code": sub["plan_code"],
-            "plan_name": plan.get("name") if plan else sub["plan_code"],
-            "billing_cycle": sub["billing_cycle"], "period": body.period,
-            "amount": sub.get("price_at_purchase") or 0,
-            "invoice_number": await _next_invoice_number(),
-            "status": "pending",
-            "payer_marked_paid_at": None, "payment_reference": None,
-            "confirmed_by": None, "paid_at": None,
-            "created_by": current_user["id"], "created_at": now(),
-        })
+        try:
+            await subscription_renewals.insert_one({
+                "_id": charge_id,
+                "org_id": sub["org_id"], "org_name": org.get("name") if org else None,
+                "subscription_id": sub["_id"], "plan_code": sub["plan_code"],
+                "plan_name": plan.get("name") if plan else sub["plan_code"],
+                "billing_cycle": sub["billing_cycle"], "period": body.period,
+                "amount": sub.get("price_at_purchase") or 0,
+                "invoice_number": await _next_invoice_number(),
+                "status": "pending",
+                "payer_marked_paid_at": None, "payment_reference": None,
+                "confirmed_by": None, "paid_at": None,
+                "created_by": current_user["id"], "created_at": now(),
+            })
+        except DuplicateKeyError:
+            # Another concurrent "Generate Renewal Charges" call (or a
+            # duplicate double-click) already created this subscription's
+            # charge for this exact period between our upfront
+            # existing_sub_ids check and this insert -- the unique index on
+            # (subscription_id, period) is the actual backstop here, this
+            # except just turns that race loss into a normal "skipped"
+            # outcome instead of a raw 500.
+            skipped += 1
+            continue
         created += 1
         owner_user = owner_by_org_id.get(sub["org_id"])
         if owner_user:

@@ -4,7 +4,10 @@ from app.db import partner_plans as partner_plans_collection, partner_subscripti
 from app.auth import get_current_user, require_roles
 from app.utils.pillars import get_active_partner_pillars
 from app.utils.plans import next_renewal_date
-from app.utils.bundle_bonus import apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons
+from app.utils.bundle_bonus import (
+    apply_bundle_bonus, revoke_bundle_bonus_if_broken, cascade_cancel_dependent_addons,
+    find_active_bundle_covering_pillar,
+)
 from app.utils.audit import log_audit
 from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
@@ -177,6 +180,15 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
         existing = await partner_subscriptions.find_one({"org_id": org_id, "plan_code": plan_code, "status": "active"})
         if existing:
             raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
+        # Same double-billing fix as routers/plans.py's subscribe -- block
+        # subscribing to an individual pillar already covered by an active
+        # bundle, not just an exact-plan_code duplicate.
+        covering_bundle = await find_active_bundle_covering_pillar(partner_subscriptions, partner_plans_collection, org_id, plan_code)
+        if covering_bundle:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{plan['name']} is already included in your active {covering_bundle['name']} bundle.",
+            )
 
     doc = {
         "_id": new_id(), "org_id": org_id, "plan_code": plan_code, "status": "active",

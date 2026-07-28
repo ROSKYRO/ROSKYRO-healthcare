@@ -219,6 +219,13 @@ async def create_rule(body: RuleBody, current_user: dict = Depends(get_current_u
     # Bonus is always a flat rupee amount (or "none"/"custom").
     if body.settlementType not in ("none", "flat_fee", "custom"):
         raise HTTPException(status_code=400, detail="Invalid settlementType.")
+    # Every sibling rate-setting endpoint (set_my_rate, set_platform_rate,
+    # set_category_rate above) validates this -- this generic endpoint
+    # didn't, so a negative flatFeeAmount here would silently insert a
+    # negative-amount settlement the moment a matching referral completes,
+    # corrupting collected-fee totals in the marketing report/admin wallet.
+    if body.settlementType == "flat_fee" and (body.flatFeeAmount is None or body.flatFeeAmount < 0):
+        raise HTTPException(status_code=400, detail="flatFeeAmount must be a non-negative number for the flat_fee settlement type.")
 
     if body.scope == "category":
         # Guard against ending up with two simultaneously-active "category"

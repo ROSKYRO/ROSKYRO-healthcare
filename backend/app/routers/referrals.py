@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from app.db import (
     referrals, referral_status_history, referral_followups,
@@ -432,7 +433,20 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
     if body.status == "declined" and body.declineReason:
         updates["decline_reason"] = body.declineReason
 
-    await referrals.update_one({"_id": referral_id}, {"$set": updates})
+    # Conditioned on the status we just read (not just `_id`) so this is an
+    # atomic compare-and-set: if two concurrent transition requests both
+    # read status="report_uploaded" and both try to move to "completed",
+    # only the FIRST one's update actually matches (the second arrives
+    # after the first has already changed the status) -- MongoDB's
+    # single-document update is atomic regardless of transaction support,
+    # so `matched_count` reliably tells us which request won the race. This
+    # closes a real double-settlement bug: without this guard, both
+    # concurrent "completed" transitions would fall through to the
+    # settlement-insert block below and the partner would be billed the
+    # Marketing Fee twice for one referral.
+    result = await referrals.update_one({"_id": referral_id, "status": referral["status"]}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="This referral was just updated by someone else — please refresh and try again.")
     await add_history(referral_id, body.status, current_user["id"], body.note)
 
     # Auto-create a follow-up task when a report is uploaded, per the
@@ -495,17 +509,31 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
             # so it keeps showing as a pending task on both the partner's
             # and ROSKYRO's side until that happens.
             partner_self_reported_paid = partner_side and bool(body.paymentReference)
-            await settlements.insert_one({
-                "_id": new_id(), "referral_id": referral_id, "rule_id": rule["_id"],
-                "org_id": referral["referring_org_id"], "partner_id": referral["partner_id"],
-                "settlement_type": rule["settlement_type"], "amount": amount,
-                "period_month": now().strftime("%Y-%m"), "status": "pending",
-                "paid_at": None,
-                "payer_marked_paid_at": now() if partner_self_reported_paid else None,
-                "payment_reference": body.paymentReference if partner_side else None,
-                "confirmed_by": None,
-                "included_in_payout_id": None, "created_at": now(),
-            })
+            try:
+                await settlements.insert_one({
+                    "_id": new_id(), "referral_id": referral_id, "rule_id": rule["_id"],
+                    "org_id": referral["referring_org_id"], "partner_id": referral["partner_id"],
+                    "settlement_type": rule["settlement_type"], "amount": amount,
+                    "period_month": now().strftime("%Y-%m"), "status": "pending",
+                    "paid_at": None,
+                    "payer_marked_paid_at": now() if partner_self_reported_paid else None,
+                    "payment_reference": body.paymentReference if partner_side else None,
+                    "confirmed_by": None,
+                    "included_in_payout_id": None, "created_at": now(),
+                })
+            except DuplicateKeyError:
+                # Defensive backstop only -- the compare-and-set status
+                # update above (matched_count == 0 -> 409) already stops a
+                # second concurrent "completed" transition from ever
+                # reaching this block for the same referral, so this
+                # should be unreachable in practice. Kept because the
+                # unique index on settlements.referral_id exists now, and
+                # silently swallowing an unexpected duplicate here is
+                # strictly better than a raw 500 on an edge case the
+                # status-guard didn't anticipate (e.g. a referral somehow
+                # re-entering "completed" after a prior settlement row was
+                # left behind by a bug elsewhere).
+                pass
 
     # Notifications
     notify_map = {
