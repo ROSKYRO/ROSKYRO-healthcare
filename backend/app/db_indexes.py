@@ -22,6 +22,8 @@ matching behavior and needs its own review. Plain indexes on the filtered
 fields are a strictly additive, zero-risk win: same results, same code,
 Mongo just no longer has to read every document to find them.
 """
+import logging
+
 from app.db import (
     users, organizations, partners, partner_categories, partner_services,
     referrals, referral_status_history, referral_followups,
@@ -33,6 +35,8 @@ from app.db import (
     newsletter_subscribers, contact_leads, subscription_renewals,
     partnerships, partnership_requests, partner_subscriptions,
 )
+
+logger = logging.getLogger(__name__)
 
 # (collection, [index specs]) -- each spec is either a single field name
 # (ascending index) or a list of (field, direction) tuples for a compound
@@ -74,9 +78,24 @@ _INDEX_PLAN = [
     (partner_subscriptions, [[("org_id", 1), ("status", 1)], [("org_id", 1), ("plan_code", 1)], "status"]),
     # Plain "period" added for settlements.py's admin_wallet_summary,
     # which filters ONLY by period (no org_id/subscription_id prefix) --
-    # the two compound indexes above can't serve that query efficiently
-    # since neither leads with "period" alone.
-    (subscription_renewals, [[("org_id", 1), ("period", 1)], [("subscription_id", 1), ("period", 1)], "status", "period"]),
+    # the org_id compound index below and the UNIQUE (subscription_id,
+    # period) index in _UNIQUE_INDEX_PLAN can't serve that query
+    # efficiently since neither leads with "period" alone.
+    #
+    # NOTE: (subscription_id, period) is deliberately NOT listed here as a
+    # second plain compound index -- it's created as a UNIQUE index in
+    # _UNIQUE_INDEX_PLAN below instead (same key pattern also serves every
+    # query this plain version would have), and creating both would collide:
+    # Mongo (and mongomock) generate the same index name for the same key
+    # pattern regardless of options, so the second create_index call with
+    # unique=True would fail with an index-options conflict against the
+    # first plain one -- silently, since ensure_indexes() below intentionally
+    # swallows create_index errors. That silent failure is exactly what
+    # happened here until this comment: the plain version below "won" (it
+    # ran first, in this same loop) and the unique constraint never actually
+    # took effect, defeating the entire point of _UNIQUE_INDEX_PLAN for this
+    # collection.
+    (subscription_renewals, [[("org_id", 1), ("period", 1)], "status", "period"]),
     (booking_settings, ["org_id"]),
     (patients, [[("org_id", 1), ("updated_at", -1)], "name", "phone"]),
     (queue_entries, [[("org_id", 1), ("checked_in_at", 1)]]),
@@ -96,6 +115,34 @@ _INDEX_PLAN = [
     (partnership_requests, [[("org_id", 1), ("status", 1)], [("partner_id", 1), ("status", 1)]]),
 ]
 
+# UNIQUE indexes -- unlike everything in _INDEX_PLAN above (pure query
+# speed, safe to lose silently), these are load-bearing for correctness:
+# they're the actual duplicate-prevention backstop for two known
+# check-then-insert race conditions (two concurrent requests can both pass
+# an in-app "does this already exist?" check before either one's insert
+# lands), each paired with a try/except DuplicateKeyError at the insert
+# site that turns the DB's rejection into a normal "already exists"
+# response instead of a second row:
+#   - subscription_renewals: (subscription_id, period) -- generate_renewal_
+#     charges (subscription_renewals.py) loops over every active
+#     subscription and inserts one renewal charge per (subscription,
+#     period); two concurrent "Generate Renewal Charges" calls for the
+#     same period would otherwise both insert a charge for the same
+#     subscription, double-billing that business for the period.
+#   - settlements: referral_id -- transition_referral (referrals.py) only
+#     ever creates one settlement per completed referral; this is the
+#     backstop behind that endpoint's own compare-and-set status guard.
+# NOTE: if unique index creation itself ever fails (e.g. pre-existing
+# duplicate rows in an already-corrupted real database), this same
+# try/except swallows that failure silently too -- the app still boots,
+# but the duplicate-prevention guard would then be missing. A real
+# deployment should monitor startup logs (or add an explicit index-health
+# check) rather than assume this is bulletproof.
+_UNIQUE_INDEX_PLAN = [
+    (subscription_renewals, [("subscription_id", 1), ("period", 1)]),
+    (settlements, [("referral_id", 1)]),
+]
+
 
 async def ensure_indexes():
     for collection, specs in _INDEX_PLAN:
@@ -112,3 +159,26 @@ async def ensure_indexes():
                 # at its previous (correct, just slower) collection-scan
                 # behavior.
                 pass
+
+    for collection, spec in _UNIQUE_INDEX_PLAN:
+        try:
+            await collection.create_index(spec, unique=True)
+        except Exception:
+            # See the note above _UNIQUE_INDEX_PLAN -- still never block
+            # startup (a real deployment shouldn't crash-loop over an index
+            # quirk), but log this one loudly: unlike the plain-index loop
+            # above, a failure here means a correctness backstop (duplicate-
+            # prevention) is silently missing, not just a slower query. This
+            # is exactly the class of bug that let a same-key-pattern plain
+            # index in _INDEX_PLAN silently shadow this unique index until
+            # it was caught by a direct DuplicateKeyError test -- logging
+            # here means the NEXT such conflict shows up in startup logs
+            # instead of only being discoverable by testing the race itself.
+            logger.warning(
+                "Failed to create UNIQUE index %s on %s -- duplicate-prevention "
+                "guard for this collection may be missing. Check for a "
+                "conflicting plain index with the same key pattern.",
+                spec, collection.name, exc_info=True,
+            )
+            # query.
+            pass
