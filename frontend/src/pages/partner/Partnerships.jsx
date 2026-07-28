@@ -15,7 +15,9 @@ export default function PartnerPartnerships() {
   const [error, setError] = useState('');
 
   const loadRequests = useCallback(() => {
-    api.get('/partnerships/requests').then((res) => setRequests(res.data.requests));
+    api.get('/partnerships/requests').then((res) => setRequests(res.data.requests)).catch(() => {
+      setError('Could not load your partnership requests. Please try again.');
+    });
   }, []);
 
   useEffect(loadRequests, [loadRequests]);
@@ -23,7 +25,10 @@ export default function PartnerPartnerships() {
   useEffect(() => {
     setBusinesses(null);
     const t = setTimeout(() => {
-      api.get('/orgs/directory', { params: { q: q || undefined } }).then((res) => setBusinesses(res.data.organizations));
+      api.get('/orgs/directory', { params: { q: q || undefined } }).then((res) => setBusinesses(res.data.organizations)).catch(() => {
+        setError('Could not load businesses. Please try again.');
+        setBusinesses([]);
+      });
     }, 300);
     return () => clearTimeout(t);
   }, [q]);

@@ -100,12 +100,16 @@ export default function Wallet() {
   const [myRate, setMyRate] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [refDrafts, setRefDrafts] = useState({});
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
+    setError('');
     Promise.all([api.get('/settlements'), api.get('/partners/me'), api.get('/settlements/my-rate')]).then(([s, p, mr]) => {
       setSettlements(s.data.settlements);
       setPartner(p.data.partner);
       setMyRate(mr.data.rate);
+    }).catch(() => {
+      setError('Could not load your wallet. Please try again.');
     });
   }, []);
 
@@ -113,14 +117,26 @@ export default function Wallet() {
 
   async function markPaid(id) {
     setBusyId(id);
+    setError('');
     try {
       const paymentReference = (refDrafts[id] || '').trim() || undefined;
       await api.post(`/settlements/${id}/mark-paid`, { paymentReference });
       setRefDrafts((prev) => ({ ...prev, [id]: '' }));
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this as paid. Please try again.');
     } finally {
       setBusyId(null);
     }
+  }
+
+  if (error && (!settlements || !partner)) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
   }
 
   if (!settlements || !partner) return <PageLoading />;
@@ -143,6 +159,8 @@ export default function Wallet() {
           dikhega.
         </p>
       </div>
+
+      {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <div className="grid md:grid-cols-4 gap-5">
         <Card className="p-5">
