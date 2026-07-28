@@ -138,7 +138,20 @@ async def list_partners(
     if availableOnly == "true":
         filt["is_available_now"] = True
 
-    rows = await partners.find(filt).to_list(None)
+    # Fixed: this was `.to_list(None)` -- with the default (no category/
+    # verifiedOnly/availableOnly) view, `filt` is `{}`, so this pulled
+    # EVERY partner registered on the entire platform into memory before
+    # _referral_bonus_amounts_for/_enrich_partners ran their own $in
+    # batch-fetches over all of them, and only THEN sorted and sliced to
+    # the 200 rows actually returned. Same "fetch-everything-then-slice-
+    # in-Python" pattern already identified and fixed elsewhere in this
+    # codebase (see tasks.py's list_tasks). 2000 is a generous bound
+    # (city/q are still matched in Python below, against org/coverage
+    # fields not stored on this collection, so this can't be pushed all
+    # the way down to a single Mongo filter without a larger $lookup-based
+    # rewrite) that protects against genuinely unbounded growth while
+    # comfortably covering any realistic partner network size today.
+    rows = await partners.find(filt).to_list(2000)
     rate_map = await _referral_bonus_amounts_for(rows)
     enriched = await _enrich_partners(rows, rate_map)
 
