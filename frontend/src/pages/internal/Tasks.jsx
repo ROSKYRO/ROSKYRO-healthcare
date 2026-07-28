@@ -88,7 +88,14 @@ export default function Tasks() {
         )}
         <Select value={status} onChange={(e) => setStatus(e.target.value)} className="max-w-[180px]">
           <option value="">All statuses</option>
-          {['pending', 'in_progress', 'in_review', 'done', 'blocked'].map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
+          {/* Fixed: this list didn't match any status the backend ever
+              actually sets -- create_task defaults new tasks to "open"
+              (not "pending"), and claim()/complete() below only ever set
+              "in_progress" or "done". "in_review" and "blocked" were never
+              reachable. Filtering by "pending" silently returned zero
+              results even when open tasks existed, with no way to filter
+              for them at all since "open" wasn't an option. */}
+          {['open', 'in_progress', 'done'].map((s) => <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>)}
         </Select>
       </div>
 
