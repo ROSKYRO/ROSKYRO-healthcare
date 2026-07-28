@@ -9,6 +9,13 @@ const REASON_LABEL = {
   consultation: 'Free Consultation',
   enterprise: 'Enterprise / Multi-Branch',
   general: 'General Enquiry',
+  // Fixed: Pricing.jsx's partner-tab "Get Started" link sends
+  // ?reason=become-partner, but that key was missing here -- it fell
+  // through to the "general" fallback, so a prospective partner saw
+  // "General Enquiry" confirmed back at them instead of the actual reason
+  // they clicked through for (the reason value itself was still correctly
+  // forwarded to and stored by the backend -- this was a display-only bug).
+  'become-partner': 'Become a Partner',
 };
 
 const BUSINESS_TYPES = ['Clinic', 'Hospital', 'Diagnostic Lab', 'Imaging Center', 'Dental Clinic', 'Physiotherapy / Rehab', 'Home Healthcare', 'Veterinary Clinic', 'Other'];

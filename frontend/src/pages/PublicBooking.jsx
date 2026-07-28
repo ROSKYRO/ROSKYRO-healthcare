@@ -54,7 +54,19 @@ export default function PublicBooking() {
     api.get(`/public/booking/${orgId}/doctors/${doctor.id}/availability`)
       .then((res) => {
         setAvailability(res.data);
-        setSelectedDate(res.data.days[0]?.date || null);
+        // Fixed: this used to unconditionally pick days[0], even when that
+        // doctor has zero open slots that day (doesn't work that day of
+        // the week, or every slot is already fully booked) -- the booking
+        // screen would open on an already-empty day, immediately showing
+        // the "no slots" message instead of landing on the nearest day
+        // that actually has something bookable. Prefer the first day with
+        // at least one slot that still has remaining capacity; fall back
+        // to the first day with any slot at all; fall back to days[0] only
+        // if literally nothing is bookable in the whole window.
+        const days = res.data.days || [];
+        const firstAvailable = days.find((d) => d.slots.some((s) => s.remaining > 0));
+        const firstWithSlots = days.find((d) => d.slots.length > 0);
+        setSelectedDate((firstAvailable || firstWithSlots || days[0])?.date || null);
         setState('ready');
       })
       .catch(() => {

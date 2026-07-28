@@ -106,7 +106,18 @@ export default function Login() {
       const home = { customer: '/app', partner: '/partner', internal: '/team' }[user.appShell] || '/app';
       navigate(home);
     } catch (err) {
-      setError(err?.response?.data?.error || 'Login failed. Please check your credentials.');
+      // Fixed: the fallback message assumed every failure was a bad
+      // identifier/password. If the request never got a response at all
+      // (network down, CORS misconfig, backend 500/timeout) err.response
+      // is undefined, so this fallback fired and told the user to
+      // "check your credentials" -- actively wrong guidance that sends
+      // someone with a perfectly correct password into retyping it
+      // over and over instead of realizing it's a connectivity issue.
+      if (!err?.response) {
+        setError("Can't reach the server right now. Check your connection and try again.");
+      } else {
+        setError(err.response.data?.error || 'Login failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }

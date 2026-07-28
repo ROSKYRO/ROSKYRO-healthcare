@@ -1,21 +1,34 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import api from '../lib/api';
 import { PublicHeader, PublicFooter } from '../components/PublicNav';
 import FaqList from '../components/FaqList';
 import { FAQ_HOMEPAGE } from '../data/faq';
 
+// Fixed: prices here used to be hardcoded strings baked straight into the
+// bundle ('14,999' / '9,999' / '4,999'), while Pricing.jsx and Services.jsx
+// both correctly fetch live pricing from GET /plans. Prices are
+// admin-editable at runtime via PATCH /plans/{code} (see
+// internal/PricingManagement.jsx) specifically so they CAN change without a
+// frontend redeploy -- the moment an admin updated a plan's price, this,
+// the highest-traffic page on the site, would keep showing the old number
+// while /pricing showed the correct one. Static copy (title, subtitle,
+// promise, feature bullets, emoji) stays here since that's genuinely
+// content, not billing data; only the price itself now comes from the live
+// catalog, matched by `code`.
 const PILLARS = [
   {
-    code: 'grow', emoji: '\u{1F680}', title: 'GROW', subtitle: 'Get More Patients', price: '14,999',
+    code: 'grow', emoji: '\u{1F680}', title: 'GROW', subtitle: 'Get More Patients',
     promise: '"Hum marketing nahi, patient growth par kaam karte hain."',
     items: ['AI Visibility Management', 'Google Business Profile', 'Review Growth', 'SEO & AI Search', 'Social Media Marketing'],
   },
   {
-    code: 'manage', emoji: '\u{2699}\u{FE0F}', title: 'MANAGE', subtitle: 'Run Your Business Efficiently', price: '9,999',
+    code: 'manage', emoji: '\u{2699}\u{FE0F}', title: 'MANAGE', subtitle: 'Run Your Business Efficiently',
     promise: '"Hum aapke operations ko simple aur organized banate hain."',
     items: ['Appointment Management', 'Patient CRM', 'Billing', 'Patient Communication', 'Reports'],
   },
   {
-    code: 'connect', emoji: '\u{1F91D}', title: 'Networking Marketing', subtitle: "Grow Through India's Healthcare Network", price: '4,999',
+    code: 'connect', emoji: '\u{1F91D}', title: 'Networking Marketing', subtitle: "Grow Through India's Healthcare Network",
     promise: '"Hum aapko trusted healthcare partners se jodte hain."',
     items: ['Referral Network', 'Diagnostic Partners', 'Imaging Centers', 'Rehab Partners', 'Home Healthcare'],
   },
@@ -42,6 +55,20 @@ const HOW_IT_WORKS = [
 ];
 
 export default function Landing() {
+  const [priceByCode, setPriceByCode] = useState({});
+
+  useEffect(() => {
+    api.get('/plans').then((res) => {
+      const map = {};
+      for (const p of res.data.plans || []) map[p.code] = p.monthly_price;
+      setPriceByCode(map);
+    }).catch(() => {
+      // Best-effort only -- if this fails, the price line below just
+      // doesn't render rather than showing a stale/fake number. The rest
+      // of the homepage doesn't depend on pricing data.
+    });
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-brand-950 to-brand-900 text-white">
       <PublicHeader dark />
@@ -109,7 +136,11 @@ export default function Landing() {
                     <h3 className="font-bold text-lg text-gray-900">{p.title}</h3>
                   </div>
                   <p className="text-sm text-gray-500 mt-0.5">{p.subtitle}</p>
-                  <p className="text-2xl font-extrabold text-gray-900 mt-3">₹{p.price}<span className="text-sm font-normal text-gray-400">/month</span></p>
+                  <p className="text-2xl font-extrabold text-gray-900 mt-3">
+                    {priceByCode[p.code] != null
+                      ? <>₹{Number(priceByCode[p.code]).toLocaleString('en-IN')}<span className="text-sm font-normal text-gray-400">/month</span></>
+                      : <span className="text-base font-normal text-gray-400">See pricing →</span>}
+                  </p>
                   <ul className="mt-4 space-y-1.5">
                     {p.items.map((i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
