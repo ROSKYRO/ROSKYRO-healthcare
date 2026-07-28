@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
@@ -7,10 +7,25 @@ import { Card, CardHeader, StatTile, Button, PageLoading, formatCurrency } from 
 export default function InternalDashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get('/dashboard/internal').then((res) => setData(res.data));
+  const load = useCallback(() => {
+    setError('');
+    api.get('/dashboard/internal').then((res) => setData(res.data)).catch(() => {
+      setError('Could not load the dashboard. Please try again.');
+    });
   }, []);
+
+  useEffect(load, [load]);
+
+  if (error && !data) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
 
   if (!data) return <PageLoading />;
 

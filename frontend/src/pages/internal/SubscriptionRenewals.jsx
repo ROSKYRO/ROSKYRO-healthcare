@@ -67,6 +67,7 @@ export default function SubscriptionRenewals() {
 
   async function downloadInvoice(renewal) {
     setDownloadingId(renewal.id);
+    setError('');
     try {
       const res = await api.get(`/subscription-renewals/${renewal.id}/invoice`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
@@ -77,6 +78,8 @@ export default function SubscriptionRenewals() {
       link.click();
       link.remove();
       window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError('Could not download this invoice. Please try again.');
     } finally {
       setDownloadingId(null);
     }
