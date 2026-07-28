@@ -204,7 +204,15 @@ export function Table({ columns, rows, keyField = 'id', onRowClick, emptyMessage
 }
 
 export function formatCurrency(amount) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number(amount || 0));
+  // Fixed: `amount || 0` only substitutes 0 for FALSY input (null/
+  // undefined/0/''/NaN) -- a non-numeric but truthy value (e.g. a
+  // corrupted numeric field arriving as a string like "N/A") passed
+  // straight through, so Number("N/A") became NaN and
+  // Intl.NumberFormat.format(NaN) silently rendered "₹NaN" on screen
+  // instead of falling back to ₹0. This is the shared money formatter
+  // every page on the site uses, so this guards it explicitly.
+  const n = Number(amount);
+  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(Number.isFinite(n) ? n : 0);
 }
 
 export function formatDate(d) {
