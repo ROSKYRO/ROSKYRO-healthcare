@@ -6,7 +6,7 @@ import { Card, CardHeader, Table, Button, Input, Textarea, Badge, PageLoading, f
 // Plan codes stay lowercase internally ('grow'/'manage'/'connect'/'complete'),
 // but 'connect' now displays as "Networking Marketing" -- a plain
 // .toUpperCase() on the code would still read "CONNECT".
-const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing', complete: 'ROSKYRO Complete' };
+const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing', complete: 'ROSKYRO Complete', reels: 'Reel Making' };
 
 // One row per Networking Marketing partner category, grouped under its
 // group_name -- an inline ₹ input + Save button per row so ROSKYRO can set
@@ -88,6 +88,7 @@ function PlanEditor({ plan, onSave, busy }) {
       <div className="flex items-center justify-between">
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{plan.code}</p>
         {plan.is_bundle && <Badge tone="verified">Bundle</Badge>}
+        {plan.is_addon && <Badge tone="slate">Add-on{plan.requires_pillar ? ` · requires ${plan.requires_pillar.toUpperCase()}` : ''}</Badge>}
       </div>
       <div className="grid grid-cols-2 gap-4 mt-3">
         <Input label="Display name" value={form.name} onChange={set('name')} />
@@ -114,6 +115,7 @@ function PlanEditor({ plan, onSave, busy }) {
 export default function PricingManagement() {
   const { user } = useAuth();
   const [plans, setPlans] = useState(null);
+  const [partnerPlans, setPartnerPlans] = useState(null);
   const [payment, setPayment] = useState(null);
   const [subscriptions, setSubscriptions] = useState(null);
   const [paymentForm, setPaymentForm] = useState({ upiId: '', paymentNote: '' });
@@ -130,10 +132,11 @@ export default function PricingManagement() {
 
   const load = useCallback(() => {
     Promise.all([
-      api.get('/plans'), api.get('/settings/payment'), api.get('/plans/subscriptions'), api.get('/settlements/marketing-fee-rate'),
+      api.get('/plans'), api.get('/partner-plans'), api.get('/settings/payment'), api.get('/plans/subscriptions'), api.get('/settlements/marketing-fee-rate'),
       api.get('/settlements/platform-rate'), api.get('/settlements/category-rates'),
-    ]).then(([p, s, sub, mr, pr, cr]) => {
+    ]).then(([p, pp, s, sub, mr, pr, cr]) => {
       setPlans(p.data.plans);
+      setPartnerPlans(pp.data.plans);
       setPayment(s.data);
       setPaymentForm({ upiId: s.data.upi_id || '', paymentNote: s.data.payment_note || '' });
       setSubscriptions(sub.data.subscriptions);
@@ -157,7 +160,7 @@ export default function PricingManagement() {
     );
   }
 
-  if (!plans || !payment || !subscriptions || marketingRate == null || !categoryRates) return <PageLoading />;
+  if (!plans || !partnerPlans || !payment || !subscriptions || marketingRate == null || !categoryRates) return <PageLoading />;
 
   function renewalCell(sub) {
     if (sub.status !== 'active' || !sub.renewal_date) {
@@ -181,6 +184,20 @@ export default function PricingManagement() {
       load();
     } catch (err) {
       setMessage(err?.response?.data?.error || 'Could not save this plan.');
+    } finally {
+      setBusyCode(null);
+    }
+  }
+
+  async function savePartnerPlan(code, patch) {
+    setBusyCode(`partner-${code}`);
+    setMessage('');
+    try {
+      await api.patch(`/partner-plans/${code}`, patch);
+      setMessage(`Partner ${PLAN_DISPLAY_NAMES[code] || code.toUpperCase()} updated.`);
+      load();
+    } catch (err) {
+      setMessage(err?.response?.data?.error || 'Could not save this partner plan.');
     } finally {
       setBusyCode(null);
     }
@@ -358,10 +375,23 @@ export default function PricingManagement() {
       </Card>
 
       <div>
-        <h2 className="text-lg font-bold text-gray-900 mb-3">Pillar & Bundle Pricing</h2>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Business Pillar & Bundle Pricing</h2>
+        <p className="text-sm text-gray-500 -mt-2 mb-3">What healthcare businesses (the customer side) pay.</p>
         <div className="grid md:grid-cols-2 gap-5">
           {plans.map((plan) => (
             <PlanEditor key={plan.code} plan={plan} onSave={savePlan} busy={busyCode === plan.code} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-bold text-gray-900 mb-3">Partner Pillar & Bundle Pricing</h2>
+        <p className="text-sm text-gray-500 -mt-2 mb-3">
+          What Networking Marketing partners pay — same services as the business catalog above, separate pricing.
+        </p>
+        <div className="grid md:grid-cols-2 gap-5">
+          {partnerPlans.map((plan) => (
+            <PlanEditor key={plan.code} plan={plan} onSave={savePartnerPlan} busy={busyCode === `partner-${plan.code}`} />
           ))}
         </div>
       </div>

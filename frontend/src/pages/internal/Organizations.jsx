@@ -1,16 +1,31 @@
 import { useEffect, useState } from 'react';
 import api from '../../lib/api';
-import { Card, Table, Badge, PageLoading, formatDate, formatCurrency } from '../../components/ui';
+import { Card, Table, Badge, Button, PageLoading, formatDate, formatCurrency } from '../../components/ui';
 
 const PILLAR_TONE = { grow: 'completed', manage: 'sent', connect: 'pending' };
+const BUSINESS_CATEGORY_LABELS = { solo_doctor: 'Solo Doctor', clinic: 'Clinic', hospital: 'Hospital (All Category)' };
 
 export default function Organizations() {
   const [orgs, setOrgs] = useState(null);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.get('/orgs').then((res) => setOrgs(res.data.organizations));
-  }, []);
+  const load = () => {
+    setError('');
+    api.get('/orgs').then((res) => setOrgs(res.data.organizations)).catch(() => {
+      setError('Could not load businesses. Please try again.');
+    });
+  };
 
+  useEffect(load, []);
+
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!orgs) return <PageLoading />;
 
   return (
@@ -26,6 +41,7 @@ export default function Organizations() {
           columns={[
             { key: 'name', header: 'Business' },
             { key: 'business_type', header: 'Type', render: (r) => <Badge tone="slate">{r.business_type.replace(/_/g, ' ')}</Badge> },
+            { key: 'business_category', header: 'Category', render: (r) => r.business_category ? <Badge tone="slate">{BUSINESS_CATEGORY_LABELS[r.business_category] || r.business_category}</Badge> : <span className="text-xs text-gray-400">—</span> },
             { key: 'city', header: 'City' },
             {
               key: 'active_pillars',
