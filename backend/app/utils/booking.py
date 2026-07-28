@@ -9,6 +9,11 @@ from datetime import datetime, timedelta
 
 DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
+# This app is India-only (INR pricing, en-IN locale, "Mon-Sat 9AM-7PM IST"
+# on every public-facing page) -- IST is a fixed +5:30 offset, no DST, so a
+# plain timedelta is enough (no pytz/zoneinfo dependency needed).
+IST_OFFSET = timedelta(hours=5, minutes=30)
+
 
 def time_to_minutes(t: str) -> int:
     """Accepts 'HH:MM' or 'HH:MM:SS'."""
@@ -39,8 +44,21 @@ def generate_slots(open_time: str, close_time: str, duration_minutes: int = 30) 
 
 
 def upcoming_dates(window_days: int) -> list[str]:
-    """Today (+0) through window_days-1 ahead, as 'YYYY-MM-DD' strings."""
-    today = datetime.utcnow().date()
+    """Today (+0) through window_days-1 ahead, as 'YYYY-MM-DD' strings.
+
+    Fixed: this used to compute "today" as datetime.utcnow().date() --
+    plain UTC, not the clinic's actual local day. For roughly the first
+    5.5 hours of every IST calendar day (00:00-05:29 IST, i.e. while it's
+    still the previous day in UTC), that made this function think "today"
+    was still YESTERDAY. Two real, public-facing endpoints depend on this
+    exact value at the exact same moment (public_booking.py's
+    get_doctor_availability building the calendar AND book_slot
+    re-validating the submitted date against it) -- so a patient booking
+    during that window could see, and successfully submit, a date that had
+    already closed out operationally for the clinic, with no error at any
+    step. Now computed against the clinic's IST wall-clock day instead.
+    """
+    today = (datetime.utcnow() + IST_OFFSET).date()
     return [(today + timedelta(days=i)).isoformat() for i in range(int(window_days))]
 
 

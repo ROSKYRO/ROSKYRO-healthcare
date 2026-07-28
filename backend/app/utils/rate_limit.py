@@ -31,6 +31,15 @@ _LIMITS = {
     "public_booking": (10, 60),
     "public_contact": (5, 60),
     "public_newsletter": (5, 60),
+    # Fixed: POST /api/auth/login had no throttling at all -- unlimited
+    # password guesses per IP against a healthcare SaaS login endpoint with
+    # no lockout/backoff/429. Deliberately keyed to only FAILED login
+    # attempts (see auth.py's login()), not every call to the endpoint --
+    # so this only ever throttles actual wrong-identifier/wrong-password
+    # guessing, never legitimate successful logins no matter how frequent
+    # (several staff behind one shared clinic IP, or this app's own test
+    # suite, which logs in dozens of times per run with valid credentials).
+    "auth_login_failed": (10, 60),
 }
 
 
