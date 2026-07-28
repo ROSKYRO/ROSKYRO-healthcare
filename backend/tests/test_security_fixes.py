@@ -114,9 +114,59 @@ def test_partner_cannot_override_orgid_on_business_list_endpoints(client):
     partner = _login(client, CITYSCAN_PARTNER_EMAIL)
     partner_headers = _headers(partner)
 
-    for path in ("/api/billing", "/api/followups", "/api/queue", "/api/reviews", "/api/reports", "/api/appointments"):
+    for path in (
+        "/api/billing", "/api/followups", "/api/queue", "/api/reviews", "/api/reports", "/api/appointments",
+        "/api/patients", "/api/whatsapp", "/api/doctors",
+    ):
         resp = client.get(path, headers=partner_headers, params={"orgId": org_id})
         assert resp.status_code == 400, f"{path}: expected 400, got {resp.status_code}: {resp.text}"
+
+
+def test_get_patient_is_scoped_to_the_owning_business(client, unique_suffix):
+    """GET /patients/{id} previously only rejected a MISMATCHED customer --
+    a partner-shell account (never checked at all) could fetch any
+    patient's full record plus appointments/follow-ups/invoices/WhatsApp
+    history for a business it has no relationship with."""
+    sunrise = _login(client, SUNRISE_EMAIL)
+    sunrise_headers = _headers(sunrise)
+    created = client.post("/api/patients", headers=sunrise_headers, json={"name": f"Sec Test Patient GET {unique_suffix}"})
+    assert created.status_code == 201, created.text
+    patient_id = created.json()["patient"]["id"]
+
+    partner = _login(client, CITYSCAN_PARTNER_EMAIL)
+    forbidden = client.get(f"/api/patients/{patient_id}", headers=_headers(partner))
+    assert forbidden.status_code == 403, forbidden.text
+
+    vital_skin = _login(client, VITAL_SKIN_EMAIL)
+    cross_org = client.get(f"/api/patients/{patient_id}", headers=_headers(vital_skin))
+    assert cross_org.status_code == 403, cross_org.text
+
+    own = client.get(f"/api/patients/{patient_id}", headers=sunrise_headers)
+    assert own.status_code == 200, own.text
+
+
+def test_get_org_and_team_are_scoped_to_the_owning_business(client):
+    """GET /orgs/{id} and GET /orgs/{id}/team previously only rejected a
+    MISMATCHED customer -- a partner-shell account (never checked at all)
+    could fetch any business's full contact/billing record or staff
+    roster."""
+    sunrise = _login(client, SUNRISE_EMAIL)
+    org_id = sunrise["user"]["orgId"]
+    partner = _login(client, CITYSCAN_PARTNER_EMAIL)
+    partner_headers = _headers(partner)
+
+    forbidden_org = client.get(f"/api/orgs/{org_id}", headers=partner_headers)
+    assert forbidden_org.status_code == 403, forbidden_org.text
+
+    forbidden_team = client.get(f"/api/orgs/{org_id}/team", headers=partner_headers)
+    assert forbidden_team.status_code == 403, forbidden_team.text
+
+    own_org = client.get(f"/api/orgs/{org_id}", headers=_headers(sunrise))
+    assert own_org.status_code == 200, own_org.text
+
+    admin = _login(client, "admin@roskyro.com")
+    internal_org = client.get(f"/api/orgs/{org_id}", headers=_headers(admin))
+    assert internal_org.status_code == 200, internal_org.text
 
 
 def test_approval_decision_is_scoped_to_the_owning_business(client):
@@ -167,6 +217,33 @@ def test_referral_timeline_is_scoped_to_the_involved_parties(client):
     other_business = _login(client, SMILE_DENTAL_EMAIL)
     other_business_timeline = client.get(f"/api/referrals/{referral_id}/timeline", headers=_headers(other_business))
     assert other_business_timeline.status_code == 403, other_business_timeline.text
+
+
+def test_invoice_with_non_numeric_line_item_returns_clean_400(client, unique_suffix):
+    """A non-numeric quantity/unitPrice/discount/taxRate previously raised
+    an unhandled ValueError from float()/int() in compute_totals, which
+    surfaced as a raw unhandled-exception 500 instead of a normal
+    validation error."""
+    sunrise = _login(client, SUNRISE_EMAIL)
+    headers = _headers(sunrise)
+    resp = client.post("/api/billing", headers=headers, json={
+        "patientName": f"Bad Invoice {unique_suffix}",
+        "lineItems": [{"description": "Consultation", "quantity": "not-a-number", "unitPrice": 500}],
+    })
+    assert resp.status_code == 400, resp.text
+
+
+def test_create_doctor_with_non_numeric_fee_returns_clean_400(client, unique_suffix):
+    """Same fix as the invoice case above, applied to POST /doctors'
+    consultationFee/slotDurationMinutes/capacityPerSlot conversions."""
+    sunrise = _login(client, SUNRISE_EMAIL)
+    headers = _headers(sunrise)
+    resp = client.post("/api/doctors", headers=headers, json={
+        "name": f"Dr. Bad Fee {unique_suffix}",
+        "consultationFee": "not-a-number",
+        "weeklySchedule": [{"day": "mon", "openTime": "09:00", "closeTime": "17:00"}],
+    })
+    assert resp.status_code == 400, resp.text
 
 
 def test_login_identifier_is_not_a_regex_injection_vector(client):
