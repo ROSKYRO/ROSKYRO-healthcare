@@ -10,6 +10,10 @@ const PILLAR_UPSELL = {
   connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', price: '4,999', tagline: 'A verified network of trusted healthcare partners.' },
 };
 
+// Size/scale classification captured at registration -- informational only,
+// shown here on the dashboard as the closest thing to a business profile.
+const BUSINESS_CATEGORY_LABELS = { solo_doctor: 'Solo Doctor', clinic: 'Clinic', hospital: 'Hospital (All Category)' };
+
 function UpsellCard({ pillar }) {
   const info = PILLAR_UPSELL[pillar];
   return (
@@ -60,7 +64,12 @@ export default function CustomerDashboard() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Welcome back, {user.name.split(' ')[0]}</h1>
-        <p className="text-sm text-gray-500 mt-1">Here's how {user.orgName} is doing right now.</p>
+        <p className="text-sm text-gray-500 mt-1 flex items-center gap-2 flex-wrap">
+          Here's how {user.orgName} is doing right now.
+          {user.businessCategory && (
+            <Badge tone="slate">{BUSINESS_CATEGORY_LABELS[user.businessCategory] || user.businessCategory}</Badge>
+          )}
+        </p>
       </div>
 
       {!hasAnyPillar && (

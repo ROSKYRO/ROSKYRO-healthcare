@@ -5,9 +5,13 @@ import { Card, Badge, Button, PageLoading, EmptyState, formatDate } from '../../
 export default function Approvals() {
   const [approvals, setApprovals] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [error, setError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/approvals').then((res) => setApprovals(res.data.approvals));
+    setError('');
+    api.get('/approvals').then((res) => setApprovals(res.data.approvals)).catch(() => {
+      setError('Could not load approvals. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -22,6 +26,14 @@ export default function Approvals() {
     }
   }
 
+  if (error) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!approvals) return <PageLoading />;
 
   return (

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import PricingCards from '../../components/PricingCards';
+import AddonCard from '../../components/AddonCard';
 import { Card, CardHeader, Table, Badge, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
 
 // Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
@@ -138,13 +139,17 @@ export default function Plans() {
   const [checkout, setCheckout] = useState(null); // { plan, cycle }
   const [markingRenewalId, setMarkingRenewalId] = useState(null);
   const [downloadingRenewalId, setDownloadingRenewalId] = useState(null);
+  const [addonBusy, setAddonBusy] = useState(false);
 
   const load = useCallback(() => {
+    setError('');
     Promise.all([api.get('/plans'), api.get('/plans/mine'), api.get('/settings/payment'), api.get('/subscription-renewals')]).then(([p, m, s, r]) => {
       setPlans(p.data.plans);
       setMine(m.data);
       setPayment(s.data);
       setRenewals(r.data.renewals);
+    }).catch(() => {
+      setError('Could not load your plans. Please try again.');
     });
   }, []);
 
@@ -214,6 +219,42 @@ export default function Plans() {
     }
   }
 
+  async function subscribeAddon(addon) {
+    setError('');
+    setAddonBusy(true);
+    try {
+      await api.post('/plans/subscribe', { planCode: addon.code, billingCycle: 'monthly' });
+      await refreshPillars();
+      load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not add this add-on.');
+    } finally {
+      setAddonBusy(false);
+    }
+  }
+
+  async function cancelAddon(addon) {
+    setError('');
+    setAddonBusy(true);
+    try {
+      await api.post('/plans/cancel', { planCode: addon.code });
+      await refreshPillars();
+      load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not cancel this add-on.');
+    } finally {
+      setAddonBusy(false);
+    }
+  }
+
+  if (error && (!plans || !mine || !payment || !renewals)) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{error}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!plans || !mine || !payment || !renewals) return <PageLoading />;
 
   return (
@@ -230,7 +271,15 @@ export default function Plans() {
         </div>
         <div className="flex flex-wrap gap-2">
           {mine.activePillars.length === 0 && <span className="text-sm text-gray-400">No pillar active yet — pick one below to get started.</span>}
-          {mine.activePillars.map((p) => <Badge key={p} tone="verified">{PILLAR_DISPLAY_NAMES[p] || p.toUpperCase()} active</Badge>)}
+          {mine.activePillars.map((p) => {
+            const sub = mine.subscriptions.find((s) => s.plan_code === p && s.status === 'active');
+            const isFreeBonus = sub && Number(sub.price_at_purchase) === 0;
+            return (
+              <Badge key={p} tone="verified">
+                {PILLAR_DISPLAY_NAMES[p] || p.toUpperCase()} active{isFreeBonus ? ' · free bonus' : ''}
+              </Badge>
+            );
+          })}
         </div>
       </Card>
 
@@ -241,6 +290,16 @@ export default function Plans() {
           before anything is charged.
         </p>
       </Card>
+
+      {!mine.activePillars.includes('connect') && (
+        <Card className="p-4 bg-teal-50 border-teal-100 flex items-center gap-3">
+          <span className="text-lg">{'\u{1F381}'}</span>
+          <p className="text-sm text-gray-700">
+            <span className="font-semibold">Bonus:</span> activate MANAGE + GROW together and Networking Marketing
+            (CONNECT) is unlocked free, as a bonus earning service — no separate subscription needed.
+          </p>
+        </Card>
+      )}
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
@@ -253,6 +312,22 @@ export default function Plans() {
         ctaLabel="Activate"
         busyCode={busyCode}
       />
+
+      {(() => {
+        const addon = plans.find((p) => p.code === 'reels');
+        if (!addon) return null;
+        const addonSub = mine.subscriptions.find((s) => s.plan_code === 'reels' && s.status === 'active');
+        return (
+          <AddonCard
+            addon={addon}
+            isActive={!!addonSub}
+            requiredPillarActive={mine.activePillars.includes(addon.requires_pillar)}
+            busy={addonBusy}
+            onSubscribe={() => subscribeAddon(addon)}
+            onCancel={() => cancelAddon(addon)}
+          />
+        );
+      })()}
 
       <Card>
         <div className="px-5 pt-5">

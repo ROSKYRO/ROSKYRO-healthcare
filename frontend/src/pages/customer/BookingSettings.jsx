@@ -188,10 +188,12 @@ function DoctorForm({ initial, onCancel, onSaved }) {
 function DoctorRow({ doctor, onChanged }) {
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const activeDays = (doctor.weekly_schedule || []).map((e) => DAYS.find((d) => d.key === e.day)?.label || e.day);
 
   async function toggleActive() {
     setBusy(true);
+    setError('');
     try {
       if (doctor.is_active) {
         await api.delete(`/doctors/${doctor.id}`);
@@ -199,6 +201,8 @@ function DoctorRow({ doctor, onChanged }) {
         await api.patch(`/doctors/${doctor.id}`, { isActive: true });
       }
       onChanged();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not update this doctor. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -222,6 +226,7 @@ function DoctorRow({ doctor, onChanged }) {
         <p className="text-xs text-gray-400 mt-1">
           {activeDays.length ? `Available: ${activeDays.join(', ')}` : 'No days set'}
         </p>
+        {error && <p className="text-xs text-rose-600 mt-1">{error}</p>}
       </div>
       <div className="flex flex-col gap-2 shrink-0">
         <Button size="sm" variant="secondary" onClick={() => setEditing(true)}>Edit</Button>
@@ -236,9 +241,13 @@ function DoctorRow({ doctor, onChanged }) {
 function DoctorsPanel() {
   const [doctorList, setDoctorList] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(() => {
-    api.get('/doctors').then((res) => setDoctorList(res.data.doctors));
+    setLoadError('');
+    api.get('/doctors').then((res) => setDoctorList(res.data.doctors)).catch(() => {
+      setLoadError('Could not load doctors. Please try again.');
+    });
   }, []);
 
   useEffect(load, [load]);
@@ -254,7 +263,12 @@ function DoctorsPanel() {
         {adding && (
           <DoctorForm onCancel={() => setAdding(false)} onSaved={() => { setAdding(false); load(); }} />
         )}
-        {doctorList === null ? (
+        {loadError ? (
+          <div className="text-center py-6">
+            <p className="text-sm text-rose-600">{loadError}</p>
+            <Button size="sm" variant="secondary" className="mt-3" onClick={load}>Retry</Button>
+          </div>
+        ) : doctorList === null ? (
           <PageLoading />
         ) : doctorList.length === 0 && !adding ? (
           <p className="text-sm text-gray-400 py-6 text-center">Abhi tak koi doctor add nahi hua. Patients tab tak booking nahi kar payenge.</p>
@@ -276,8 +290,10 @@ export default function BookingSettings() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
   const load = useCallback(() => {
+    setLoadError('');
     Promise.all([api.get('/booking-settings'), api.get('/appointments')])
       .then(([s, a]) => {
         setSettings(s.data.settings);
@@ -288,7 +304,10 @@ export default function BookingSettings() {
         });
         setBookings(a.data.appointments.filter((ap) => ap.booked_via === 'qr_booking'));
       })
-      .catch((err) => { if (err?.response?.status === 402) setBlocked(true); });
+      .catch((err) => {
+        if (err?.response?.status === 402) setBlocked(true);
+        else setLoadError('Could not load booking settings. Please try again.');
+      });
   }, []);
 
   useEffect(load, [load]);
@@ -312,15 +331,26 @@ export default function BookingSettings() {
 
   async function markPaid(id) {
     setBusyId(id);
+    setError(null);
     try {
       await api.patch(`/appointments/${id}`, { paymentStatus: 'paid' });
       load();
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Could not mark this booking as paid. Please try again.');
     } finally {
       setBusyId(null);
     }
   }
 
   if (blocked) return <UpgradePrompt pillar="manage" />;
+  if (loadError) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{loadError}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!settings || !form) return <PageLoading />;
 
   return (

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { Card, CardHeader, Button, Input, Select, PageLoading } from '../../components/ui';
 
+
 const EMPTY_SERVICE = { name: '', price: '', priceUnit: 'per service' };
 
 export default function BecomePartner() {
@@ -22,8 +23,11 @@ export default function BecomePartner() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [submitted, setSubmitted] = useState(null);
+  const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
+    setLoadError('');
     Promise.all([
       api.get('/partners/categories'),
       api.get('/partners/me').then((r) => r.data.partner).catch(() => null),
@@ -31,8 +35,13 @@ export default function BecomePartner() {
       setCategories(catRes.data.categories);
       setExisting(me);
       setLoading(false);
+    }).catch(() => {
+      setLoadError('Could not load partner details. Please try again.');
+      setLoading(false);
     });
-  }, []);
+  };
+
+  useEffect(load, []);
 
   // Group categories by their group_name for a grouped <optgroup> picker —
   // matches the curated Networking Marketing taxonomy (Specialist Referrals, Diagnostics,
@@ -82,6 +91,14 @@ export default function BecomePartner() {
     }
   }
 
+  if (loadError) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{loadError}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (loading) return <PageLoading />;
 
   const alreadyPartner = existing || submitted;

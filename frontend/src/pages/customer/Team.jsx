@@ -10,8 +10,13 @@ export default function Team() {
   const [form, setForm] = useState({ name: '', email: '', role: 'staff', phone: '', password: '' });
   const [error, setError] = useState('');
 
+  const [loadError, setLoadError] = useState('');
+
   const load = useCallback(() => {
-    api.get(`/orgs/${user.orgId}/team`).then((res) => setTeam(res.data.team));
+    setLoadError('');
+    api.get(`/orgs/${user.orgId}/team`).then((res) => setTeam(res.data.team)).catch(() => {
+      setLoadError('Could not load your team. Please try again.');
+    });
   }, [user.orgId]);
 
   useEffect(load, [load]);
@@ -29,6 +34,14 @@ export default function Team() {
     }
   }
 
+  if (loadError) {
+    return (
+      <div className="text-center py-16">
+        <p className="text-sm text-rose-600">{loadError}</p>
+        <Button size="sm" variant="secondary" className="mt-4" onClick={load}>Retry</Button>
+      </div>
+    );
+  }
   if (!team) return <PageLoading />;
 
   return (
