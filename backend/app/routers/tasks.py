@@ -202,10 +202,23 @@ class PatchTaskBody(BaseModel):
     priority: str | None = None
 
 
+TASK_STATUSES = ("open", "in_progress", "done")
+
+
 @router.patch("/{task_id}")
 async def patch_task(task_id: str, body: dict, current_user: dict = Depends(get_current_user)):
     updates = {}
     if body.get("status"):
+        # Fixed: any string was accepted with no check against the
+        # statuses the rest of the app actually produces/understands --
+        # "open" (create_task's default), "in_progress" (Tasks.jsx's
+        # claim()), and "done" (checked explicitly by dashboard.py's
+        # overdue counters and this file's own is_overdue/tasks_summary
+        # logic). A typo like "donee" saved silently and then never
+        # counted as complete anywhere -- same validation gap already
+        # closed for queue.py's status field.
+        if body["status"] not in TASK_STATUSES:
+            raise HTTPException(status_code=400, detail=f"status must be one of: {', '.join(TASK_STATUSES)}.")
         updates["status"] = body["status"]
         if body["status"] == "done":
             updates["completed_at"] = now()

@@ -24,14 +24,21 @@ async def patch_payment_settings(body: dict, current_user: dict = Depends(get_cu
     upi_id = (body.get("upiId") or "").strip()
     if not upi_id:
         raise HTTPException(status_code=400, detail="upiId is required.")
-    payment_note = (body.get("paymentNote") or "").strip() or None
 
-    existing = await platform_settings.find_one({"_id": 1})
+    # Fixed: "paymentNote omitted from the request" and "paymentNote sent
+    # as an empty string" both collapsed to the same `None`, and `None`
+    # only ever got written to the $set on first-ever creation (`elif not
+    # existing`). So once a note existed, an admin trying to CLEAR it by
+    # submitting an empty paymentNote silently no-opped -- the PATCH
+    # returned 200 with no error, but the old note stayed forever. Now the
+    # two cases are distinguished by whether the key was sent at all.
     updates = {"upi_id": upi_id, "updated_by": current_user["id"], "updated_at": now()}
-    if payment_note is not None:
-        updates["payment_note"] = payment_note
-    elif not existing:
-        updates["payment_note"] = None
+    if "paymentNote" in body:
+        updates["payment_note"] = (body.get("paymentNote") or "").strip() or None
+    else:
+        existing = await platform_settings.find_one({"_id": 1})
+        if not existing:
+            updates["payment_note"] = None
 
     await platform_settings.update_one({"_id": 1}, {"$set": updates}, upsert=True)
     updated = await platform_settings.find_one({"_id": 1})
