@@ -102,7 +102,16 @@ async def org_directory(q: str | None = None, current_user: dict = Depends(get_c
 
 @router.get("/{org_id}")
 async def get_org(org_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user["appShell"] == "customer" and current_user["orgId"] != org_id:
+    # Fixed IDOR: this only ever rejected a MISMATCHED customer -- a
+    # partner-shell account (never checked at all) could fetch any org_id
+    # and get that business's full contact/billing record, including
+    # marketing_payout_upi_id. Only the owning customer or ROSKYRO internal
+    # may read a full org record; a partner only ever sees the narrow
+    # public-safe shape from GET /orgs/directory above.
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and current_user["orgId"] == org_id)
+    ):
         raise HTTPException(status_code=403, detail="Not authorized.")
     org = await organizations.find_one({"_id": org_id})
     if not org:
@@ -149,7 +158,13 @@ async def patch_org(org_id: str, body: dict, current_user: dict = Depends(get_cu
 
 @router.get("/{org_id}/team")
 async def get_team(org_id: str, current_user: dict = Depends(get_current_user)):
-    if current_user["appShell"] == "customer" and current_user["orgId"] != org_id:
+    # Fixed IDOR: same missing-partner-check pattern as GET /{org_id}
+    # above -- a partner-shell account could otherwise fetch any business's
+    # full staff roster (names, emails, phones, roles).
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and current_user["orgId"] == org_id)
+    ):
         raise HTTPException(status_code=403, detail="Not authorized.")
     rows = await users.find({"org_id": org_id}).sort("created_at", 1).to_list(None)
     team = [{

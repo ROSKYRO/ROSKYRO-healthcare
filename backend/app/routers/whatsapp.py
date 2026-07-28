@@ -26,8 +26,16 @@ TEMPLATES = {
 @router.get("")
 @router.get("/")
 async def list_messages(orgId: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Fixed IDOR: previously fell through to `else orgId` for ANY
+    # non-customer shell, so a partner account could pass an arbitrary
+    # ?orgId= and read another business's WhatsApp communication log
+    # (patient names, phone numbers, message content) -- same bug class as
+    # patients.py/appointments.py/billing.py/followups.py/queue.py.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
     rows = await whatsapp_messages.find({"org_id": org_id}).sort("created_at", -1).limit(200).to_list(None)
     return {"messages": to_out_many(rows)}

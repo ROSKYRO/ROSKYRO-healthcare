@@ -48,8 +48,16 @@ def _assert_owns(existing: dict, current_user: dict, action: str):
 @router.get("")
 @router.get("/")
 async def list_doctors(orgId: str | None = None, activeOnly: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Fixed IDOR: previously fell through to `else orgId` for ANY
+    # non-customer shell, so a partner account could pass an arbitrary
+    # ?orgId= and enumerate another business's doctor roster (names,
+    # specialties, consultation fees) -- same bug class as patients.py/
+    # whatsapp.py/appointments.py/billing.py/followups.py/queue.py.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
     filt: dict = {"org_id": org_id}
     if activeOnly == "true":
@@ -73,12 +81,22 @@ async def create_doctor(body: dict, current_user: dict = Depends(get_current_use
     if not schedule:
         raise HTTPException(status_code=400, detail="Add at least one day this doctor is available.")
 
+    # A non-numeric consultationFee/slotDurationMinutes/capacityPerSlot
+    # previously raised an unhandled ValueError from float()/int() here,
+    # surfacing as a raw 500 instead of a clean validation error.
+    try:
+        consultation_fee = float(body.get("consultationFee") or 0)
+        slot_duration_minutes = int(body.get("slotDurationMinutes") or 30)
+        capacity_per_slot = max(1, int(body.get("capacityPerSlot") or 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Consultation fee, slot duration and capacity must be numeric.")
+
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "name": name,
         "specialty": (body.get("specialty") or "").strip() or None,
-        "consultation_fee": float(body.get("consultationFee") or 0),
-        "slot_duration_minutes": int(body.get("slotDurationMinutes") or 30),
-        "capacity_per_slot": max(1, int(body.get("capacityPerSlot") or 1)),
+        "consultation_fee": consultation_fee,
+        "slot_duration_minutes": slot_duration_minutes,
+        "capacity_per_slot": capacity_per_slot,
         "weekly_schedule": schedule, "is_active": True,
         "created_at": now(), "updated_at": now(),
     }

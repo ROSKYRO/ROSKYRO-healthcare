@@ -14,8 +14,17 @@ router = APIRouter(
 @router.get("")
 @router.get("/")
 async def list_patients(orgId: str | None = None, q: str | None = None, current_user: dict = Depends(get_current_user)):
-    org_id = current_user["orgId"] if current_user["appShell"] == "customer" else orgId
-    if not org_id:
+    # Fixed IDOR: this previously fell through to `else orgId` for ANY
+    # non-customer shell, so a partner account (a normal, self-registerable
+    # account type -- not just internal) could pass an arbitrary ?orgId=
+    # and read another business's entire patient roster, including
+    # clinical notes -- same bug class already fixed on appointments.py/
+    # billing.py/followups.py/queue.py/reviews.py/reports.py/approvals.py.
+    if current_user["appShell"] == "customer":
+        org_id = current_user["orgId"]
+    elif current_user["appShell"] == "internal" and orgId:
+        org_id = orgId
+    else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
     filt: dict = {"org_id": org_id}
@@ -33,7 +42,16 @@ async def get_patient(patient_id: str, current_user: dict = Depends(get_current_
     p = await patients.find_one({"_id": patient_id})
     if not p:
         raise HTTPException(status_code=404, detail="Patient not found.")
-    if current_user["appShell"] == "customer" and p["org_id"] != current_user["orgId"]:
+    # Fixed IDOR: this only ever rejected a MISMATCHED customer -- a partner
+    # account (never checked at all) could fetch any patient_id and get
+    # that patient's full record plus appointments/follow-ups/invoices/
+    # WhatsApp history for a business it has no relationship with. Same
+    # ownership rule as PATCH /{patient_id} below: internal, or the
+    # matching customer -- partner is never authorized here.
+    if not (
+        current_user["appShell"] == "internal"
+        or (current_user["appShell"] == "customer" and p["org_id"] == current_user["orgId"])
+    ):
         raise HTTPException(status_code=403, detail="Not authorized.")
 
     appts = await appointments.find({"org_id": p["org_id"], "patient_name": p["name"]}).sort("appointment_date", -1).limit(20).to_list(None)

@@ -19,10 +19,18 @@ async def next_invoice_number() -> str:
 
 
 def compute_totals(line_items: list, discount: float = 0, tax_rate: float = 0) -> dict:
-    subtotal = sum(float(i.get("quantity") or 1) * float(i.get("unitPrice") or 0) for i in (line_items or []))
-    taxed = max(0, subtotal - float(discount or 0))
-    tax = round(taxed * (float(tax_rate or 0) / 100), 2)
-    total = round(taxed + tax, 2)
+    # A non-numeric quantity/unitPrice/discount/taxRate previously raised an
+    # unhandled ValueError here (float()/int() on a bad string), which
+    # main.py has no handler for -- it surfaced as a raw 500 instead of a
+    # clean validation error. Now it's a normal 400 the frontend's existing
+    # error-message handling already knows how to display.
+    try:
+        subtotal = sum(float(i.get("quantity") or 1) * float(i.get("unitPrice") or 0) for i in (line_items or []))
+        taxed = max(0, subtotal - float(discount or 0))
+        tax = round(taxed * (float(tax_rate or 0) / 100), 2)
+        total = round(taxed + tax, 2)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Line items, discount and tax rate must be numeric.")
     return {"subtotal": round(subtotal, 2), "tax": tax, "total": total}
 
 
