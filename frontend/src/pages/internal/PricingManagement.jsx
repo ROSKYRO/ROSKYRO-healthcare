@@ -49,7 +49,14 @@ function CategoryRateRow({ cat, onSave, busy }) {
   );
 }
 
-function PlanEditor({ plan, onSave, busy }) {
+// priceEditable=false for the partner catalog: per explicit product
+// request, partner pricing permanently mirrors the business catalog's
+// pricing now (PATCH /partner-plans/{code} no longer even accepts
+// monthlyPrice/yearlyPrice -- see routers/partner_plans.py), so those
+// fields are shown read-only here instead of as inputs, and are never
+// included in the save patch. Price only ever changes via the Business
+// pricing editor below, which propagates automatically.
+function PlanEditor({ plan, onSave, busy, priceEditable = true }) {
   const [form, setForm] = useState({
     name: plan.name,
     tagline: plan.tagline || '',
@@ -70,16 +77,19 @@ function PlanEditor({ plan, onSave, busy }) {
   }
 
   async function handleSave() {
-    await onSave(plan.code, {
+    const patch = {
       name: form.name,
       tagline: form.tagline,
-      monthly_price: Number(form.monthly_price),
-      yearly_price: form.yearly_price === '' ? null : Number(form.yearly_price),
       badge: form.badge || null,
       best_for: form.best_for,
       customer_promise: form.customer_promise,
       features: form.features.split('\n').map((f) => f.trim()).filter(Boolean),
-    });
+    };
+    if (priceEditable) {
+      patch.monthly_price = Number(form.monthly_price);
+      patch.yearly_price = form.yearly_price === '' ? null : Number(form.yearly_price);
+    }
+    await onSave(plan.code, patch);
     setDirty(false);
   }
 
@@ -93,8 +103,23 @@ function PlanEditor({ plan, onSave, busy }) {
       <div className="grid grid-cols-2 gap-4 mt-3">
         <Input label="Display name" value={form.name} onChange={set('name')} />
         <Input label="Badge (e.g. Most Popular)" value={form.badge} onChange={set('badge')} placeholder="leave blank for none" />
-        <Input label="Monthly price (₹)" type="number" value={form.monthly_price} onChange={set('monthly_price')} />
-        <Input label="Yearly price (₹)" type="number" value={form.yearly_price} onChange={set('yearly_price')} />
+        {priceEditable ? (
+          <>
+            <Input label="Monthly price (₹)" type="number" value={form.monthly_price} onChange={set('monthly_price')} />
+            <Input label="Yearly price (₹)" type="number" value={form.yearly_price} onChange={set('yearly_price')} />
+          </>
+        ) : (
+          <>
+            <div>
+              <span className="block text-sm font-medium text-gray-700 mb-1">Monthly price (₹)</span>
+              <p className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">{formatCurrency(plan.monthly_price)} · synced from Business pricing</p>
+            </div>
+            <div>
+              <span className="block text-sm font-medium text-gray-700 mb-1">Yearly price (₹)</span>
+              <p className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500">{formatCurrency(plan.yearly_price)} · synced from Business pricing</p>
+            </div>
+          </>
+        )}
       </div>
       <Textarea label="Tagline" rows={2} className="mt-4" value={form.tagline} onChange={set('tagline')} />
       <Textarea label="Best for" rows={1} className="mt-4" value={form.best_for} onChange={set('best_for')} />
@@ -402,11 +427,13 @@ export default function PricingManagement() {
       <div>
         <h2 className="text-lg font-bold text-gray-900 mb-3">Partner Pillar & Bundle Pricing</h2>
         <p className="text-sm text-gray-500 -mt-2 mb-3">
-          What Networking Marketing partners pay — same services as the business catalog above, separate pricing.
+          What Networking Marketing partners pay — same services as the business catalog above, same pricing too
+          (always in sync now — edit price via Business Pillar & Bundle Pricing above; copy/features here can still
+          differ per audience).
         </p>
         <div className="grid md:grid-cols-2 gap-5">
           {partnerPlans.map((plan) => (
-            <PlanEditor key={plan.code} plan={plan} onSave={savePartnerPlan} busy={busyCode === `partner-${plan.code}`} />
+            <PlanEditor key={plan.code} plan={plan} onSave={savePartnerPlan} busy={busyCode === `partner-${plan.code}`} priceEditable={false} />
           ))}
         </div>
       </div>
