@@ -1,7 +1,7 @@
 import re
 
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends, Request
+from pydantic import BaseModel, Field
 
 from app.db import users, organizations, tasks
 from app.auth import hash_password, verify_password, create_access_token, get_current_user
@@ -9,6 +9,7 @@ from app.utils.roles import app_shell_for
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now
 from app.utils.phone import normalize_phone
+from app.utils.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -59,16 +60,33 @@ class RegisterBody(BaseModel):
     # login identifier, per the "mobile number + password to log in"
     # requirement, so a self-registered owner must supply one at signup.
     phone: str
-    password: str
+    # Fixed: this had no length constraint at all -- Register.jsx enforces
+    # minLength={6} client-side, but that's cosmetic only. Anyone calling
+    # POST /api/auth/register directly (curl, a modified frontend build)
+    # could create a real account with an empty or 1-character password,
+    # completely bypassing the intended policy.
+    password: str = Field(min_length=6)
 
 
 @router.post("/login")
-async def login(body: LoginBody):
+async def login(body: LoginBody, request: Request = None):
     """Every account type (super admin, a doctor/clinic/hospital owner, a
     network partner admin) logs in with either their email or their
     mobile number, plus their password -- resolved by whichever the typed
     identifier looks like. A bare "@" check is enough to tell them apart
     since phone numbers never contain one."""
+    # Fixed: this endpoint had zero rate limiting -- unlimited password
+    # guesses could be thrown at any identifier from a single IP with no
+    # lockout, backoff, or 429 anywhere in the path. Deliberately scoped to
+    # only FAILED attempts (wrong identifier or wrong password), not every
+    # call to this endpoint: a real clinic can have several staff logging
+    # in from behind one shared office IP/NAT in quick succession, and a
+    # blanket per-call limit would lock all of them out just for logging in
+    # normally. Counting only failures targets what actually needs
+    # throttling (credential guessing) without touching legitimate,
+    # successful logins no matter how frequent.
+    client_ip = request.client.host if (request and request.client) else "unknown"
+
     identifier = body.identifier.strip()
     if "@" in identifier:
         # re.escape() so login can't be used as a NoSQL-regex injection
@@ -82,10 +100,12 @@ async def login(body: LoginBody):
         user = await users.find_one({"phone": {"$regex": f"{re.escape(normalized)}$"}}) if normalized else None
 
     if not user:
+        enforce_rate_limit("auth_login_failed", client_ip)
         raise HTTPException(status_code=401, detail="Invalid mobile number/email or password.")
 
     ok = verify_password(body.password, user.get("password_hash") or "")
     if not ok:
+        enforce_rate_limit("auth_login_failed", client_ip)
         raise HTTPException(status_code=401, detail="Invalid mobile number/email or password.")
     if user.get("status") != "active":
         raise HTTPException(status_code=403, detail="Account is not active. Contact support.")
