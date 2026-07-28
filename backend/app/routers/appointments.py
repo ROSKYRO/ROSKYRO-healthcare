@@ -202,13 +202,24 @@ async def create_appointment(body: dict, current_user: dict = Depends(get_curren
     appointment_date = body.get("appointmentDate")
     if not patient_name or not appointment_date:
         raise HTTPException(status_code=400, detail="patientName and appointmentDate are required.")
+    # Fixed: revenueAmount was stored completely unvalidated -- a non-
+    # numeric value (e.g. a stray string from a form bug) sailed through
+    # here, then crashed with an unhandled ValueError the moment ANYTHING
+    # downstream did float(revenue_amount): this file's own revenue-total
+    # endpoint (line ~157/160) and dashboard.py's monthly revenue sum both
+    # do exactly that, so one bad appointment could take down the whole
+    # business's dashboard and revenue report, not just this request.
+    try:
+        revenue_amount = float(body.get("revenueAmount") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="revenueAmount must be numeric.")
 
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "patient_name": patient_name,
         "patient_phone": body.get("patientPhone"), "doctor_name": body.get("doctorName"),
         "appointment_date": appointment_date, "appointment_time": body.get("appointmentTime"),
         "status": "scheduled", "source": body.get("source") or "walk_in",
-        "is_new_patient": bool(body.get("isNewPatient")), "revenue_amount": body.get("revenueAmount") or 0,
+        "is_new_patient": bool(body.get("isNewPatient")), "revenue_amount": revenue_amount,
         "booked_via": None, "token_number": None, "payment_status": "not_required",
         "payment_amount": None, "patient_note": None,
     }
@@ -236,7 +247,12 @@ async def patch_appointment(appointment_id: str, body: dict, current_user: dict 
     if body.get("status"):
         updates["status"] = body["status"]
     if "revenueAmount" in body:
-        updates["revenue_amount"] = body["revenueAmount"]
+        # Same fix as create_appointment above -- this used to pass the
+        # raw client value straight through with no numeric coercion.
+        try:
+            updates["revenue_amount"] = float(body["revenueAmount"] or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="revenueAmount must be numeric.")
     if body.get("paymentStatus"):
         if body["paymentStatus"] not in ("not_required", "pending", "paid"):
             raise HTTPException(status_code=400, detail="Invalid paymentStatus.")

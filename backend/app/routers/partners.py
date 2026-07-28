@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 
@@ -240,11 +242,18 @@ async def search_by_service(keyword: str = Query(..., min_length=1), current_use
     if not needle:
         return {"partners": []}
 
-    matching_categories = await partner_categories.find({"name": {"$regex": needle, "$options": "i"}}).to_list(None)
+    # re.escape: `needle` is the raw quick-referral search-box text (what a
+    # doctor types describing the patient's need, e.g. "MRI (Brain)") used
+    # directly as a Mongo regex -- unescaped, any regex metacharacter in it
+    # would crash this endpoint with an unhandled re.error instead of
+    # matching that literal text. Same fix as orgs.py/patients.py/
+    # referrals.py's search boxes.
+    safe_needle = re.escape(needle)
+    matching_categories = await partner_categories.find({"name": {"$regex": safe_needle, "$options": "i"}}).to_list(None)
     category_ids = [c["_id"] for c in matching_categories]
 
     matching_services = await partner_services.find(
-        {"name": {"$regex": needle, "$options": "i"}, "is_active": True}
+        {"name": {"$regex": safe_needle, "$options": "i"}, "is_active": True}
     ).to_list(None)
     partner_ids_by_service = list({s["partner_id"] for s in matching_services})
 

@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.db import patients, appointments, patient_followups, invoices, whatsapp_messages
@@ -29,9 +31,15 @@ async def list_patients(orgId: str | None = None, q: str | None = None, current_
 
     filt: dict = {"org_id": org_id}
     if q:
+        # re.escape: `q` is a raw front-desk-typed search box value used
+        # directly as a Mongo regex -- a patient name/phone search
+        # containing regex metacharacters ("Mr. (Retd.) Sharma", a phone
+        # entered with brackets) would otherwise crash this endpoint with
+        # an unhandled re.error instead of just matching that literal text.
+        needle = re.escape(q)
         filt["$or"] = [
-            {"name": {"$regex": q, "$options": "i"}},
-            {"phone": {"$regex": q, "$options": "i"}},
+            {"name": {"$regex": needle, "$options": "i"}},
+            {"phone": {"$regex": needle, "$options": "i"}},
         ]
     rows = await patients.find(filt).sort("updated_at", -1).limit(300).to_list(None)
     return {"patients": to_out_many(rows)}

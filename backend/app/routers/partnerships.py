@@ -20,6 +20,7 @@ whichever one was active there before, never leaves two active at once.
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from app.db import partnerships, partnership_requests, partners, partner_categories, organizations, users
 from app.auth import get_current_user, require_internal
@@ -52,7 +53,23 @@ async def _set_partnership(org_id: str, partner: dict, initiated_by: str, actor_
         "status": "active", "initiated_by": initiated_by,
         "created_at": now(), "ended_at": None, "ended_by": None, "ended_reason": None,
     }
-    await partnerships.insert_one(doc)
+    try:
+        await partnerships.insert_one(doc)
+    except DuplicateKeyError:
+        # Backstop for the partial unique index on (org_id, category_id)
+        # WHERE status="active" (see app/db_indexes.py) -- two concurrent
+        # calls to this function (a double-click, or a retried request)
+        # could both pass the end-the-old-one update above and both reach
+        # this insert; the DB now rejects the second one instead of
+        # silently leaving two "active" partnerships for the same category.
+        # Surface it as a normal, expected-outcome conflict rather than a
+        # raw 500 -- the caller's own request just lost a race with an
+        # identical one; the end result (one active partnership) is
+        # already correct without this insert.
+        raise HTTPException(
+            status_code=409,
+            detail="This business's partner for that category was just updated by another request — please refresh and try again.",
+        )
     return doc
 
 

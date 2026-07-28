@@ -125,6 +125,26 @@ async def update_doctor(doctor_id: str, body: dict, current_user: dict = Depends
             updates[snake] = body[camel]
     if "name" in updates and not str(updates["name"]).strip():
         raise HTTPException(status_code=400, detail="name cannot be empty.")
+    # Fixed: create_doctor validates/coerces these three fields with a
+    # try/except float()/int() (see its own comment above), but this PATCH
+    # handler stored whatever raw value the client sent with no coercion
+    # at all -- a non-numeric consultationFee ("abc") saved here isn't
+    # rejected, it just sits in the DB as a string until the first patient
+    # tries to book this doctor, at which point public_booking.py's
+    # book_slot does `float(doctor.get("consultation_fee") or 0)` and
+    # crashes with an unhandled ValueError (raw 500) on every booking
+    # attempt for that doctor, not just this request. Same class of gap for
+    # slotDurationMinutes (feeds utils/booking.py's generate_slots) and
+    # capacityPerSlot (compared against an int elsewhere in book_slot).
+    try:
+        if "consultation_fee" in updates:
+            updates["consultation_fee"] = float(updates["consultation_fee"] or 0)
+        if "slot_duration_minutes" in updates:
+            updates["slot_duration_minutes"] = int(updates["slot_duration_minutes"] or 30)
+        if "capacity_per_slot" in updates:
+            updates["capacity_per_slot"] = max(1, int(updates["capacity_per_slot"] or 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Consultation fee, slot duration and capacity must be numeric.")
     if "weeklySchedule" in body:
         schedule = _validate_schedule(body["weeklySchedule"])
         if not schedule:

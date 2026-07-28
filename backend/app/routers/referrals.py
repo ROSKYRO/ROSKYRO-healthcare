@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
@@ -204,9 +206,14 @@ async def list_referrals(
     if status:
         filt["status"] = status
     if q:
+        # re.escape: same fix as patients.py/orgs.py's search boxes -- a
+        # raw user-typed search term used directly as a Mongo regex would
+        # otherwise crash with an unhandled re.error on any patient name
+        # or referral code containing regex metacharacters.
+        needle = re.escape(q)
         filt["$or"] = [
-            {"patient_name": {"$regex": q, "$options": "i"}},
-            {"referral_code": {"$regex": q, "$options": "i"}},
+            {"patient_name": {"$regex": needle, "$options": "i"}},
+            {"referral_code": {"$regex": needle, "$options": "i"}},
         ]
 
     rows = await referrals.find(filt).sort("created_at", -1).limit(300).to_list(None)

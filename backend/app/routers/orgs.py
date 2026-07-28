@@ -59,7 +59,16 @@ async def list_orgs(status: str | None = None, q: str | None = None):
     if status:
         filt["status"] = status
     if q:
-        filt["name"] = {"$regex": q, "$options": "i"}
+        # re.escape: `q` is a raw user-typed search term used directly as a
+        # Mongo regex pattern -- a name search containing regex
+        # metacharacters (e.g. "Dr. Sharma (Senior)", "O(1) Clinic") would
+        # otherwise raise an unhandled re.error ("missing ), unterminated
+        # subpattern") the moment Mongo/mongomock tries to compile it,
+        # crashing this endpoint with a raw 500 instead of just searching
+        # for that literal text. Same fix already applied correctly
+        # elsewhere in this file (email/phone dedup checks) and in
+        # auth.py/password_resets.py -- this is the search-box equivalent.
+        filt["name"] = {"$regex": re.escape(q), "$options": "i"}
     rows = await organizations.find(filt).sort("created_at", -1).limit(300).to_list(None)
 
     totals_by_org = await _pillars_and_monthly_totals_bulk([o["_id"] for o in rows])
@@ -92,7 +101,16 @@ async def org_directory(q: str | None = None, current_user: dict = Depends(get_c
         raise HTTPException(status_code=403, detail="Not authorized.")
     filt: dict = {"business_type": {"$in": list(REFERRAL_CREATOR_BUSINESS_TYPES)}}
     if q:
-        filt["name"] = {"$regex": q, "$options": "i"}
+        # re.escape: `q` is a raw user-typed search term used directly as a
+        # Mongo regex pattern -- a name search containing regex
+        # metacharacters (e.g. "Dr. Sharma (Senior)", "O(1) Clinic") would
+        # otherwise raise an unhandled re.error ("missing ), unterminated
+        # subpattern") the moment Mongo/mongomock tries to compile it,
+        # crashing this endpoint with a raw 500 instead of just searching
+        # for that literal text. Same fix already applied correctly
+        # elsewhere in this file (email/phone dedup checks) and in
+        # auth.py/password_resets.py -- this is the search-box equivalent.
+        filt["name"] = {"$regex": re.escape(q), "$options": "i"}
     rows = await organizations.find(filt).sort("name", 1).limit(100).to_list(None)
     return {"organizations": [
         {"id": o["_id"], "name": o.get("name"), "city": o.get("city"), "businessType": o.get("business_type")}
