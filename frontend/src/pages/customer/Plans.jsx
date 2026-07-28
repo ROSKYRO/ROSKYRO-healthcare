@@ -297,16 +297,6 @@ export default function Plans() {
         </p>
       </Card>
 
-      {!mine.activePillars.includes('connect') && (
-        <Card className="p-4 bg-teal-50 border-teal-100 flex items-center gap-3">
-          <span className="text-lg">{'\u{1F381}'}</span>
-          <p className="text-sm text-gray-700">
-            <span className="font-semibold">Bonus:</span> activate MANAGE + GROW together and Networking Marketing
-            (CONNECT) is unlocked free, as a bonus earning service — no separate subscription needed.
-          </p>
-        </Card>
-      )}
-
       {error && <p className="text-sm text-rose-600">{error}</p>}
 
       <PricingCards
