@@ -79,7 +79,11 @@ function SubscriptionRenewals({ renewals, payment, onMarkPaid, markingId, downlo
         <div className="mx-5 mb-2 bg-amber-50 border border-amber-200 rounded-xl p-4">
           <p className="text-sm text-gray-700">
             <span className="font-semibold">{pendingCharge.plan_name}</span> renewal for{' '}
-            <span className="font-semibold">{pendingCharge.period}</span> — {formatCurrency(pendingCharge.amount)} due.
+            <span className="font-semibold">{pendingCharge.period}</span> — {formatCurrency(pendingCharge.amount)}
+            {/* due_date is only present on charges generated round-19-onward
+                (see backend/app/routers/subscription_renewals.py's
+                _renewal_due_date) -- older charges just show "due" as before. */}
+            {pendingCharge.due_date ? <> due {formatDate(pendingCharge.due_date)}</> : ' due'}.
           </p>
           <p className="text-xs text-gray-500 mt-1">
             UPI pe pay karein: <span className="font-semibold text-gray-900">{payment?.upi_id}</span>
@@ -108,6 +112,7 @@ function SubscriptionRenewals({ renewals, payment, onMarkPaid, markingId, downlo
         emptyMessage="Abhi tak koi renewal charge generate nahi hua hai."
         columns={[
           { key: 'period', header: 'Period' },
+          { key: 'due_date', header: 'Due', render: (r) => (r.due_date ? formatDate(r.due_date) : '—') },
           { key: 'plan_name', header: 'Plan' },
           { key: 'amount', header: 'Amount', render: (r) => formatCurrency(r.amount) },
           { key: 'status', header: 'Status', render: (r) => (
