@@ -66,7 +66,10 @@ _INDEX_PLAN = [
     (statements, [[("party_type", 1), ("party_id", 1)]]),
     # "booking_code" powers GET /appointments/lookup/{booking_code} --
     # the quick-referral flow's org-scoped exact-match lookup.
-    (appointments, [[("org_id", 1), ("appointment_date", 1)], "patient_name", "booking_code"]),
+    (appointments, [
+        [("org_id", 1), ("appointment_date", 1)], "patient_name", "booking_code",
+        [("org_id", 1), ("patient_id", 1)],
+    ]),
     (reviews, ["org_id"]),
     (marketing_performance, [[("org_id", 1), ("period_month", 1)]]),
     (visibility_score_history, ["org_id"]),
@@ -97,19 +100,38 @@ _INDEX_PLAN = [
     # collection.
     (subscription_renewals, [[("org_id", 1), ("period", 1)], "status", "period"]),
     (booking_settings, ["org_id"]),
-    (patients, [[("org_id", 1), ("updated_at", -1)], "name", "phone"]),
-    (queue_entries, [[("org_id", 1), ("checked_in_at", 1)]]),
+    # (org_id, phone_key) + (org_id, name_key) are the two lookups
+    # app/utils/patients.py's resolve_patient_id() performs on EVERY
+    # appointment / invoice / follow-up / QR booking write. Unindexed they
+    # would turn each of those writes into a collection scan of that
+    # business's whole patient roster -- the single hottest write path in
+    # the Manage pillar. Both are new key patterns (name_key/phone_key are
+    # separate fields from name/phone), so neither collides with the plain
+    # "name"/"phone" indexes alongside them.
+    (patients, [
+        [("org_id", 1), ("updated_at", -1)], "name", "phone",
+        [("org_id", 1), ("phone_key", 1)], [("org_id", 1), ("name_key", 1)],
+    ]),
+    # (org_id, patient_id) on each history collection below: this is the
+    # join patients.py's timeline view now runs, replacing the old
+    # (org_id, patient_name) match. The patient_name indexes are kept --
+    # linked_history_filter()'s legacy arm still uses them, and
+    # POST /api/patients/link-history scans on them too.
+    (queue_entries, [[("org_id", 1), ("checked_in_at", 1)], [("org_id", 1), ("patient_id", 1)]]),
     # (org_id, patient_name) covers patients.py's per-patient lookup.
     # (org_id, status, due_date) added for followups.py's list endpoint --
     # it filters by org_id (+ optional status) and sorts by due_date, but
     # had no index covering that sort, so Mongo had to in-memory-sort every
     # one of that org's follow-up documents before slicing to 300 for any
     # business with a large follow-up history.
-    (patient_followups, [[("org_id", 1), ("patient_name", 1)], [("org_id", 1), ("status", 1), ("due_date", 1)]]),
-    (invoices, [[("org_id", 1), ("status", 1)], "patient_name"]),
+    (patient_followups, [
+        [("org_id", 1), ("patient_name", 1)], [("org_id", 1), ("status", 1), ("due_date", 1)],
+        [("org_id", 1), ("patient_id", 1)],
+    ]),
+    (invoices, [[("org_id", 1), ("status", 1)], "patient_name", [("org_id", 1), ("patient_id", 1)]]),
     # "status" added for the platform-wide (no org_id filter) WhatsApp
     # Queue view -- see routers/whatsapp.py's GET /queue.
-    (whatsapp_messages, ["org_id", "referral_id", "patient_name", "status"]),
+    (whatsapp_messages, ["org_id", "referral_id", "patient_name", "status", [("org_id", 1), ("patient_id", 1)]]),
     (doctors, [[("org_id", 1), ("is_active", 1)]]),
     (password_reset_requests, [[("user_id", 1), ("status", 1)]]),
     (newsletter_subscribers, ["email"]),
