@@ -1,71 +1,99 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import { PageLoading } from './components/ui';
+
+// PERFORMANCE (round 18): every one of the 60+ page components below used to
+// be a plain static `import`, which meant webpack emitted ONE bundle
+// containing the entire application -- all three app shells, every internal
+// admin screen, every legal page. A patient scanning a clinic's QR code on
+// mobile data downloaded and parsed the ROSKYRO internal settlements console
+// before the booking form could render. Nothing about how any page BEHAVES
+// changes here: React.lazy() only defers *when* the code for a route is
+// fetched (on first navigation to it) instead of *whether* it is fetched.
+// Same components, same routes, same props.
+//
+// Deliberately kept STATIC (i.e. in the main bundle, no extra round-trip):
+//   - Landing, Login, Pricing -- the three most common first paint for a
+//     visitor; lazy-loading these would ADD a network hop to the very page
+//     that decides whether someone bounces.
+//   - PublicBooking -- the QR-code destination. This is the single most
+//     latency-sensitive screen in the product (a patient standing in a
+//     clinic, on a phone, on cellular), so it must never wait on a second
+//     chunk fetch.
+//
+// The <Suspense> fallback below is PageLoading -- the exact same spinner
+// ProtectedRoute already shows while the auth check resolves, so a
+// first-visit-to-a-route chunk fetch looks identical to the loading state
+// users already see rather than flashing something new.
 
 import Landing from './pages/Landing';
 import Login from './pages/Login';
-import Register from './pages/Register';
 import Pricing from './pages/Pricing';
-import Services from './pages/Services';
-import About from './pages/About';
-import Contact from './pages/Contact';
-import FAQ from './pages/FAQ';
-import PrivacyPolicy from './pages/legal/PrivacyPolicy';
-import TermsConditions from './pages/legal/TermsConditions';
-import RefundPolicy from './pages/legal/RefundPolicy';
-import CookiePolicy from './pages/legal/CookiePolicy';
-import Disclaimer from './pages/legal/Disclaimer';
 import PublicBooking from './pages/PublicBooking';
 
-import CustomerDashboard from './pages/customer/Dashboard';
-import Referrals from './pages/customer/Referrals';
-import ReferralNew from './pages/customer/ReferralNew';
-import PartnerDirectory from './pages/customer/PartnerDirectory';
-import Partnerships from './pages/customer/Partnerships';
-import BecomePartner from './pages/customer/BecomePartner';
-import Appointments from './pages/customer/Appointments';
-import Reviews from './pages/customer/Reviews';
-import Approvals from './pages/customer/Approvals';
-import Reports from './pages/customer/Reports';
-import Team from './pages/customer/Team';
-import Plans from './pages/customer/Plans';
-import Patients from './pages/customer/Patients';
-import PatientDetail from './pages/customer/PatientDetail';
-import Queue from './pages/customer/Queue';
-import Followups from './pages/customer/Followups';
-import Billing from './pages/customer/Billing';
-import Whatsapp from './pages/customer/Whatsapp';
-import GrowthHub from './pages/customer/GrowthHub';
-import BookingSettings from './pages/customer/BookingSettings';
-import CustomerSettlements from './pages/customer/Settlements';
+const Register = lazy(() => import('./pages/Register'));
+const Services = lazy(() => import('./pages/Services'));
+const About = lazy(() => import('./pages/About'));
+const Contact = lazy(() => import('./pages/Contact'));
+const FAQ = lazy(() => import('./pages/FAQ'));
+const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'));
+const TermsConditions = lazy(() => import('./pages/legal/TermsConditions'));
+const RefundPolicy = lazy(() => import('./pages/legal/RefundPolicy'));
+const CookiePolicy = lazy(() => import('./pages/legal/CookiePolicy'));
+const Disclaimer = lazy(() => import('./pages/legal/Disclaimer'));
 
-import PartnerDashboard from './pages/partner/Dashboard';
-import PartnerRequests from './pages/partner/Requests';
-import PartnerPartnerships from './pages/partner/Partnerships';
-import Wallet from './pages/partner/Wallet';
-import PartnerPlans from './pages/partner/Plans';
+const CustomerDashboard = lazy(() => import('./pages/customer/Dashboard'));
+const Referrals = lazy(() => import('./pages/customer/Referrals'));
+const ReferralNew = lazy(() => import('./pages/customer/ReferralNew'));
+const PartnerDirectory = lazy(() => import('./pages/customer/PartnerDirectory'));
+const Partnerships = lazy(() => import('./pages/customer/Partnerships'));
+const BecomePartner = lazy(() => import('./pages/customer/BecomePartner'));
+const Appointments = lazy(() => import('./pages/customer/Appointments'));
+const Reviews = lazy(() => import('./pages/customer/Reviews'));
+const Approvals = lazy(() => import('./pages/customer/Approvals'));
+const Reports = lazy(() => import('./pages/customer/Reports'));
+const Team = lazy(() => import('./pages/customer/Team'));
+const Plans = lazy(() => import('./pages/customer/Plans'));
+const Patients = lazy(() => import('./pages/customer/Patients'));
+const PatientDetail = lazy(() => import('./pages/customer/PatientDetail'));
+const Queue = lazy(() => import('./pages/customer/Queue'));
+const Followups = lazy(() => import('./pages/customer/Followups'));
+const Billing = lazy(() => import('./pages/customer/Billing'));
+const Whatsapp = lazy(() => import('./pages/customer/Whatsapp'));
+const GrowthHub = lazy(() => import('./pages/customer/GrowthHub'));
+const BookingSettings = lazy(() => import('./pages/customer/BookingSettings'));
+const CustomerSettlements = lazy(() => import('./pages/customer/Settlements'));
 
-import InternalDashboard from './pages/internal/Dashboard';
-import Tasks from './pages/internal/Tasks';
-import AllReferrals from './pages/internal/AllReferrals';
-import Organizations from './pages/internal/Organizations';
-import PartnerVerification from './pages/internal/PartnerVerification';
-import InternalSettlements from './pages/internal/Settlements';
-import MarketingPayouts from './pages/internal/MarketingPayouts';
-import SubscriptionRenewals from './pages/internal/SubscriptionRenewals';
-import AdminWallet from './pages/internal/AdminWallet';
-import Roster from './pages/internal/Roster';
-import PricingManagement from './pages/internal/PricingManagement';
-import PasswordRequests from './pages/internal/PasswordRequests';
-import WhatsappQueue from './pages/internal/WhatsappQueue';
-import ResetDemoData from './pages/internal/ResetDemoData';
+const PartnerDashboard = lazy(() => import('./pages/partner/Dashboard'));
+const PartnerRequests = lazy(() => import('./pages/partner/Requests'));
+const PartnerPartnerships = lazy(() => import('./pages/partner/Partnerships'));
+const Wallet = lazy(() => import('./pages/partner/Wallet'));
+const PartnerPlans = lazy(() => import('./pages/partner/Plans'));
 
-import ReferralDetail from './pages/shared/ReferralDetail';
+const InternalDashboard = lazy(() => import('./pages/internal/Dashboard'));
+const Tasks = lazy(() => import('./pages/internal/Tasks'));
+const AllReferrals = lazy(() => import('./pages/internal/AllReferrals'));
+const Organizations = lazy(() => import('./pages/internal/Organizations'));
+const PartnerVerification = lazy(() => import('./pages/internal/PartnerVerification'));
+const InternalSettlements = lazy(() => import('./pages/internal/Settlements'));
+const MarketingPayouts = lazy(() => import('./pages/internal/MarketingPayouts'));
+const SubscriptionRenewals = lazy(() => import('./pages/internal/SubscriptionRenewals'));
+const AdminWallet = lazy(() => import('./pages/internal/AdminWallet'));
+const Roster = lazy(() => import('./pages/internal/Roster'));
+const PricingManagement = lazy(() => import('./pages/internal/PricingManagement'));
+const PasswordRequests = lazy(() => import('./pages/internal/PasswordRequests'));
+const WhatsappQueue = lazy(() => import('./pages/internal/WhatsappQueue'));
+const ResetDemoData = lazy(() => import('./pages/internal/ResetDemoData'));
+
+const ReferralDetail = lazy(() => import('./pages/shared/ReferralDetail'));
 
 export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Suspense fallback={<PageLoading />}>
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
@@ -133,6 +161,7 @@ export default function App() {
 
           <Route path="*" element={<Landing />} />
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );
