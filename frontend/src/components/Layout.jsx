@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { canCreateReferrals } from '../lib/referralRights';
@@ -95,6 +96,12 @@ const SHELL_LABEL = {
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  // Sidebar is a fixed-position slide-in drawer BELOW the `lg` breakpoint
+  // and a normal always-visible column at `lg` and above (see the `aside`
+  // classes below) -- this state only ever matters on a small screen.
+  // Fixed default `false`: the drawer opens on demand rather than
+  // covering the page on first paint.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const items = (NAV[user.appShell] || []).filter((item) => {
     if (item.roles && !item.roles.includes(user.role)) return false;
     if (item.requiresReferralRights && !canCreateReferrals(user)) return false;
@@ -102,15 +109,51 @@ export default function Layout({ children }) {
   });
   const activePillars = user.activePillars || [];
 
+  function closeSidebar() {
+    setSidebarOpen(false);
+  }
+
   return (
     <div className="min-h-screen flex bg-gray-50">
-      <aside className="w-64 shrink-0 bg-brand-950 text-white flex flex-col">
+      {/* Fixed (round 20): below `lg`, this sidebar used to be a permanent
+          w-64 column with nothing to hide it -- on a real phone screen
+          (~390px wide) it ate roughly two-thirds of the viewport and left
+          every dashboard's actual content squeezed into a sliver, with
+          text cut off mid-word. It's now a slide-in drawer on small
+          screens (closed by default, toggled by the hamburger button in
+          the mobile top bar below) and reverts to exactly the original
+          always-visible column at `lg` and up via `lg:static
+          lg:translate-x-0` -- desktop is visually unchanged. */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 lg:hidden"
+          onClick={closeSidebar}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={clsx(
+          'w-64 shrink-0 bg-brand-950 text-white flex flex-col',
+          'fixed inset-y-0 left-0 z-40 transition-transform duration-200 ease-in-out',
+          'lg:static lg:translate-x-0',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        )}
+      >
         <div className="px-5 py-5 border-b border-white/10 flex items-center gap-2">
           <img src={logo} alt="ROSKYRO" className="h-8 w-8 object-contain shrink-0" />
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-lg font-extrabold tracking-tight leading-tight">ROSKYRO</p>
             <p className="text-xs text-brand-200">{SHELL_LABEL[user.appShell] || 'Healthcare OS'}</p>
           </div>
+          <button
+            onClick={closeSidebar}
+            className="lg:hidden shrink-0 text-brand-200 hover:text-white p-1 -mr-1"
+            aria-label="Close menu"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-5 w-5">
+              <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
+          </button>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {items.map((item, idx) => {
@@ -131,6 +174,7 @@ export default function Layout({ children }) {
                 <NavLink
                   key={item.to}
                   to="/app/plans"
+                  onClick={closeSidebar}
                   className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-brand-400 hover:bg-white/5"
                   title={`Activate ${PILLAR_DISPLAY_NAMES[item.pillar] || item.pillar.toUpperCase()} to unlock`}
                 >
@@ -146,6 +190,7 @@ export default function Layout({ children }) {
                 key={item.to}
                 to={item.to}
                 end={item.end}
+                onClick={closeSidebar}
                 className={({ isActive }) =>
                   clsx(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition',
@@ -173,9 +218,28 @@ export default function Layout({ children }) {
           </button>
         </div>
       </aside>
-      <main className="flex-1 min-w-0">
-        <div className="max-w-6xl mx-auto px-6 py-8">{children}</div>
-      </main>
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Mobile-only top bar -- hidden at `lg` and up, where the sidebar
+            is always visible in-flow and this hamburger has nothing to
+            do. Sticky so the menu toggle stays reachable while a long
+            page (e.g. a patient's history, a long table) scrolls. */}
+        <div className="lg:hidden sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="shrink-0 text-gray-600 hover:text-gray-900 p-1 -ml-1"
+            aria-label="Open menu"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-6 w-6">
+              <path fillRule="evenodd" d="M2 4.75A.75.75 0 012.75 4h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 4.75zm0 10.5a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75a.75.75 0 01-.75-.75zM2 10a.75.75 0 01.75-.75h14.5a.75.75 0 010 1.5H2.75A.75.75 0 012 10z" clipRule="evenodd" />
+            </svg>
+          </button>
+          <img src={logo} alt="ROSKYRO" className="h-6 w-6 object-contain shrink-0" />
+          <p className="text-sm font-bold text-gray-900 truncate">{SHELL_LABEL[user.appShell] || 'ROSKYRO'}</p>
+        </div>
+        <main className="flex-1 min-w-0">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8">{children}</div>
+        </main>
+      </div>
     </div>
   );
 }
