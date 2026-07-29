@@ -175,6 +175,7 @@ export default function SubscriptionRenewals() {
           columns={[
             { key: 'org_name', header: 'Business' },
             { key: 'plan_name', header: 'Plan' },
+            { key: 'due_date', header: 'Due', render: (r) => (r.due_date ? formatDate(r.due_date) : '—') },
             { key: 'billing_cycle', header: 'Cycle', render: (r) => <Badge tone="slate">{r.billing_cycle}</Badge> },
             { key: 'amount', header: 'Amount', render: (r) => formatCurrency(r.amount) },
             { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
