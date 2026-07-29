@@ -11,14 +11,33 @@ PILLAR_CODES = ["grow", "manage", "connect"]
 
 
 async def _active_pillars_from(subs_collection, plans_collection_ref, org_id: str | None) -> set[str]:
+    """PERFORMANCE: this is the single hottest function in the backend --
+    auth.py calls it on EVERY authenticated request, as a router-wide
+    dependency, before any endpoint body starts running.
+
+    It used to issue one find_one per active subscription row inside an
+    `async for` over the subscription cursor: a classic 1+N, and every one
+    of those N is a full network round-trip to Atlas. A business on the
+    "complete" bundle plus the reels add-on paid 3 sequential round-trips
+    here on every single request -- roughly 30ms of pure latency added to
+    every API call before any real work began, on every page of the app.
+
+    Now it batches the plan lookup into ONE $in query, so the cost is a flat
+    2 round-trips regardless of how many subscriptions the org holds. This
+    is the same batching pattern already used in routers/plans.py,
+    routers/referrals.py and routers/settlements.py.
+    """
     if not org_id:
         return set()
-    cursor = subs_collection.find({"org_id": org_id, "status": "active"})
+    subs = await subs_collection.find({"org_id": org_id, "status": "active"}).to_list(None)
+    if not subs:
+        return set()
+    plan_codes = list({s["plan_code"] for s in subs if s.get("plan_code")})
+    if not plan_codes:
+        return set()
+    plan_docs = await plans_collection_ref.find({"_id": {"$in": plan_codes}}).to_list(None)
     pillars: set[str] = set()
-    async for sub in cursor:
-        plan = await plans_collection_ref.find_one({"_id": sub["plan_code"]})
-        if not plan:
-            continue
+    for plan in plan_docs:
         if plan.get("is_bundle") and plan.get("bundle_pillars"):
             pillars.update(plan["bundle_pillars"])
         elif plan["_id"] in PILLAR_CODES:
