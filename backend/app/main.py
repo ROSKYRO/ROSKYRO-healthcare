@@ -3,6 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
@@ -30,6 +31,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# PERFORMANCE: this single service serves BOTH the API and the built React
+# app (see the SPA fallback at the bottom of this file), and nothing was
+# compressing either. The main JS bundle alone is ~612 KB raw but ~163 KB
+# gzipped -- a 3.8x reduction -- so every first-time visitor to roskyro.in
+# was downloading roughly 450 KB more than necessary before the page could
+# render. JSON list responses (referrals, appointments, settlements) compress
+# even better than that. Every browser sends Accept-Encoding: gzip, so this
+# is transparent; responses under 1 KB are left alone because compressing
+# them costs more CPU than it saves bytes.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.exception_handler(StarletteHTTPException)

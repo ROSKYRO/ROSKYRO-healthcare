@@ -121,6 +121,63 @@ _INDEX_PLAN = [
     (partnership_requests, [[("org_id", 1), ("status", 1)], [("partner_id", 1), ("status", 1)]]),
 ]
 
+# Round 18 additions: indexes that cover a .sort() the DB was previously
+# doing IN MEMORY.
+#
+# Every one of these endpoints already pushes its sort and its LIMIT down
+# into Mongo (an earlier round's fix), which is correct -- but a sort that no
+# index can serve still forces Mongo to load every matching document into
+# memory, sort the whole set, and only then slice off the 200/300 rows that
+# get returned. On demo-sized data that's invisible; on a business with three
+# years of appointments, or on the platform-wide internal lists that have no
+# org filter at all, it's the difference between reading 300 index entries
+# and reading the entire collection on every page load. Worse, MongoDB
+# ABORTS an in-memory sort that exceeds 32MB -- so these are latent hard
+# failures on the internal admin pages, not just slow ones.
+#
+# Kept in a separate list purely for readability; ensure_indexes() runs it
+# through the same loop. Verified against the collision rule documented above
+# _UNIQUE_INDEX_PLAN: none of these key patterns duplicate an existing entry
+# in _INDEX_PLAN or _UNIQUE_INDEX_PLAN (a compound (a,b) index has a
+# different auto-generated name from plain "a" and plain "b", so adding a
+# compound alongside existing singles is safe -- what is NOT safe is the same
+# key pattern appearing twice).
+_SORT_INDEX_PLAN = [
+    # settlements.py list_settlements: filters by org_id/partner_id/
+    # period_month/status and sorts created_at DESC. "created_at" was not
+    # indexed on this collection AT ALL, and the internal Settlements page
+    # queries it with NO org filter -- a full collection scan plus a full
+    # in-memory sort of every settlement ROSKYRO has ever recorded, on every
+    # load of that page.
+    (settlements, ["created_at", [("org_id", 1), ("created_at", -1)], [("partner_id", 1), ("created_at", -1)]]),
+    (settlement_rules, ["created_at"]),
+    (marketing_payouts, ["created_at"]),
+    (statements, ["period_month"]),
+    # referrals.py list_referrals: sorts created_at DESC under each of the
+    # three scoping filters (customer -> referring_org_id, partner ->
+    # partner_id, internal -> unscoped/status).
+    (referrals, [[("referring_org_id", 1), ("created_at", -1)], [("partner_id", 1), ("created_at", -1)], [("status", 1), ("created_at", -1)]]),
+    # appointments.py list_appointments sorts on BOTH keys; the existing
+    # (org_id, appointment_date) index covers the filter and the first sort
+    # key but not the tiebreak, so Mongo still re-sorted in memory.
+    (appointments, [[("org_id", 1), ("appointment_date", -1), ("appointment_time", -1)]]),
+    # plans.py / partner_plans.py sort subscriptions by started_at DESC --
+    # /subscriptions (platform-wide, unscoped) and /mine (per org).
+    (organization_subscriptions, ["started_at", [("org_id", 1), ("started_at", -1)]]),
+    (partner_subscriptions, ["started_at", [("org_id", 1), ("started_at", -1)]]),
+    (invoices, [[("org_id", 1), ("created_at", -1)]]),
+    # whatsapp.py: per-org history sorts created_at DESC; the central ops
+    # dispatch queue filters status="queued" and sorts created_at ASC.
+    (whatsapp_messages, [[("org_id", 1), ("created_at", -1)], [("status", 1), ("created_at", 1)]]),
+    (subscription_renewals, ["created_at"]),
+    (referral_status_history, [[("referral_id", 1), ("changed_at", 1)]]),
+    (referral_followups, [[("referral_id", 1), ("created_at", -1)]]),
+    (notifications, [[("user_id", 1), ("created_at", -1)]]),
+    # NOTE: audit_logs is deliberately NOT listed. It is insert-only
+    # (utils/audit.py writes to it; nothing anywhere reads or sorts it), so
+    # an index there would only slow every write down for no read benefit.
+]
+
 # UNIQUE indexes -- unlike everything in _INDEX_PLAN above (pure query
 # speed, safe to lose silently), these are load-bearing for correctness:
 # they're the actual duplicate-prevention backstop for two known
@@ -181,7 +238,7 @@ _UNIQUE_INDEX_PLAN = [
 
 
 async def ensure_indexes():
-    for collection, specs in _INDEX_PLAN:
+    for collection, specs in _INDEX_PLAN + _SORT_INDEX_PLAN:
         for spec in specs:
             try:
                 if isinstance(spec, str):

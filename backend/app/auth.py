@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from fastapi import Header, HTTPException, Depends
 from jose import jwt, JWTError
@@ -44,17 +45,28 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     if user.get("status") != "active":
         raise HTTPException(status_code=403, detail="Account is not active.")
 
-    org = None
-    if user.get("org_id"):
-        org = await organizations.find_one({"_id": user["org_id"]})
-
+    # PERFORMANCE: the org lookup and the pillar lookup both depend only on
+    # user["org_id"] -- neither needs the other's result -- but they used to
+    # run strictly one after the other, so every authenticated request in the
+    # whole app paid both latencies in series before the endpoint body even
+    # started. Running them concurrently makes the pair cost one round-trip
+    # of wall-clock instead of two.
     app_shell = app_shell_for(user["role"])
-    if app_shell == "customer":
-        active_pillars = await get_active_pillars(user.get("org_id"))
-    elif app_shell == "partner":
-        active_pillars = await get_active_partner_pillars(user.get("org_id"))
-    else:
-        active_pillars = set()
+    org_id = user.get("org_id")
+
+    async def _load_org():
+        if not org_id:
+            return None
+        return await organizations.find_one({"_id": org_id})
+
+    async def _load_pillars():
+        if app_shell == "customer":
+            return await get_active_pillars(org_id)
+        if app_shell == "partner":
+            return await get_active_partner_pillars(org_id)
+        return set()
+
+    org, active_pillars = await asyncio.gather(_load_org(), _load_pillars())
 
     return {
         "id": user["_id"],
