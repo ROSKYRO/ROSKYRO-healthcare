@@ -6,7 +6,7 @@ directions for these two, so keep the wording on each invoice specific to
 which one it is."""
 import io
 
-from app.utils.ids import now
+from app.utils.ids import now, as_aware
 
 
 def render_marketing_payout_invoice_pdf(payout: dict) -> bytes:
@@ -107,6 +107,12 @@ def render_subscription_renewal_invoice_pdf(charge: dict) -> bytes:
         Spacer(1, 6 * mm),
         Paragraph(f"<b>Billed to:</b> {charge.get('org_name') or '—'}", styles["Normal"]),
         Paragraph(f"<b>Period covered:</b> {charge.get('period') or '—'}", styles["Normal"]),
+        # due_date is only present on charges generated round-19-onward --
+        # see routers/subscription_renewals.py's _renewal_due_date(). Older
+        # charges simply omit this line rather than showing a made-up date.
+        *([Paragraph(
+            f"<b>Due date:</b> {as_aware(charge['due_date']).strftime('%d %b %Y')}", styles["Normal"],
+        )] if charge.get("due_date") else []),
         Spacer(1, 6 * mm),
     ]
 

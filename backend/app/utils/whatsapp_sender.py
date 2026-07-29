@@ -76,9 +76,25 @@ async def dispatch_message(
         )
 
     # Default / WHATSAPP_MODE == "queue".
+    #
+    # Round 19: link the message to a patient record so patients.py's
+    # history joins on the id rather than the name (two same-named
+    # patients used to see each other's WhatsApp history). create=False
+    # deliberately -- messages also go out for referral patients who may
+    # belong to another business entirely, and a message is not a reason
+    # to invent a patient record. Imported here rather than at module
+    # scope because app.utils.patients imports app.db, and this module is
+    # pulled in from routers that app.db's own import chain touches.
+    from app.utils.patients import safe_resolve_patient_id
+
+    patient_id = await safe_resolve_patient_id(
+        org_id, patient_name, patient_phone, create=False
+    ) if org_id else None
+
     doc = {
         "_id": new_id(), "org_id": org_id, "referral_id": referral_id,
-        "patient_name": patient_name, "patient_phone": patient_phone,
+        "patient_name": patient_name, "patient_id": patient_id,
+        "patient_phone": patient_phone,
         "direction": "outbound", "template_name": template_name, "message": message,
         "wa_link": build_wa_link(patient_phone, message),
         "status": "queued", "sent_by": sent_by,
