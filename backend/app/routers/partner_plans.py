@@ -12,6 +12,7 @@ from app.utils.bundle_bonus import (
 )
 from app.utils.audit import log_audit
 from app.utils.notify import notify
+from app.utils.subscriptions import enforce_single_active
 from app.utils.ids import new_id, now, to_out, to_out_many
 
 router = APIRouter(prefix="/api/partner-plans", tags=["partner-plans"])
@@ -215,7 +216,12 @@ async def my_partner_subscriptions(current_user: dict = Depends(get_current_user
         out.append(item)
 
     active = [r for r in out if r["status"] == "active"]
-    pillars = await get_active_partner_pillars(current_user["orgId"])
+    # Reuse the pillar set auth.py already computed for this request instead
+    # of recomputing it with a fresh round of queries (the React app hits
+    # /auth/me and /partner-plans/mine back-to-back on every page load).
+    pillars = current_user.get("activePillars")
+    if pillars is None:
+        pillars = await get_active_partner_pillars(current_user["orgId"])
 
     monthly_total = 0.0
     for r in active:
@@ -254,13 +260,28 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
             )
 
     if plan.get("is_bundle"):
+        # Same double-billing fix as routers/plans.py's subscribe: the bundle
+        # branch had no duplicate guard at all (only the individual-pillar
+        # branch below did), so re-subscribing to the bundle -- switching
+        # monthly to yearly, or just a double-clicked "Activate" -- left BOTH
+        # rows active and raised two renewal invoices every period.
+        existing_bundle = await partner_subscriptions.find_one(
+            {"org_id": org_id, "plan_code": plan_code, "status": "active"}
+        )
+        if existing_bundle:
+            raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
         # Catalog STRUCTURE (is_addon/is_bundle/bundle_pillars/requires_pillar)
         # is always read from the business collection now, not partner_plans
         # -- see this file's header comment -- since that's guaranteed to be
         # fully populated, unlike partner_plans in a fresh deployment.
+        #
+        # The $nin list also used to hardcode the literal "complete" rather
+        # than this plan's own code, so a future second bundle would have
+        # silently cancelled an active "complete" row instead of surfacing
+        # the 409 above.
         addon_codes = [p["_id"] async for p in business_plans_collection.find({"is_addon": True})]
         await partner_subscriptions.update_many(
-            {"org_id": org_id, "status": "active", "plan_code": {"$nin": ["complete"] + addon_codes}},
+            {"org_id": org_id, "status": "active", "plan_code": {"$nin": [plan_code] + addon_codes}},
             {"$set": {"status": "cancelled", "cancelled_at": now()}},
         )
     else:
@@ -283,6 +304,10 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
         "price_at_purchase": price_at_purchase, "started_at": now(), "cancelled_at": None,
     }
     await partner_subscriptions.insert_one(doc)
+    # Closes the check-then-insert race both guards above are subject to --
+    # see app/utils/subscriptions.py.
+    if not await enforce_single_active(partner_subscriptions, org_id, plan_code, doc["_id"]):
+        raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
 
     partner_admin = await users.find_one({"org_id": org_id, "role": "partner_admin"})
     if partner_admin and partner_admin["_id"] != current_user["id"]:

@@ -1,3 +1,5 @@
+import math
+
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.db import plans as plans_collection, organization_subscriptions, organizations, users, partner_plans as partner_plans_collection
@@ -8,6 +10,7 @@ from app.utils.bundle_bonus import (
 )
 from app.utils.audit import log_audit
 from app.utils.notify import notify
+from app.utils.subscriptions import enforce_single_active
 from app.utils.ids import new_id, now, to_out, to_out_many
 
 # Removed per explicit request: the "activate MANAGE + GROW together ->
@@ -87,14 +90,33 @@ async def patch_plan(code: str, body: dict, current_user: dict = Depends(get_cur
     # appointments.py/booking_settings.py in earlier rounds -- an
     # admin-side write with no numeric check breaking an unrelated,
     # customer-facing read path later.
+    #
+    # Round 18 closed three remaining holes in that check:
+    #   1. `is not None` meant an explicit JSON null SKIPPED validation and
+    #      was written straight through -- the plan then had no price at all,
+    #      so `float(price or 0)` downstream silently valued it at ZERO. The
+    #      plan quietly became free for every business that subscribed next,
+    #      with nothing anywhere reporting an error.
+    #   2. There was no non-negativity check, so {"monthlyPrice": -9999} was
+    #      accepted and went on to generate negative renewal invoices.
+    #   3. float() accepts the strings "NaN"/"Infinity", which then break
+    #      JSON serialisation of the catalog for everyone (FastAPI uses
+    #      allow_nan=False), including the PUBLIC pricing page.
     price_updates = {}
     for price_field in ("monthly_price", "yearly_price"):
-        if price_field in updates and updates[price_field] is not None:
+        if price_field in updates:
+            if updates[price_field] is None:
+                raise HTTPException(status_code=400, detail=f"{price_field} cannot be empty.")
             try:
-                updates[price_field] = float(updates[price_field])
+                value = float(updates[price_field])
             except (TypeError, ValueError):
                 raise HTTPException(status_code=400, detail=f"{price_field} must be numeric.")
-            price_updates[price_field] = updates[price_field]
+            if not math.isfinite(value):
+                raise HTTPException(status_code=400, detail=f"{price_field} must be a real number.")
+            if value < 0:
+                raise HTTPException(status_code=400, detail=f"{price_field} cannot be negative.")
+            updates[price_field] = value
+            price_updates[price_field] = value
 
     result = await plans_collection.update_one({"_id": code}, {"$set": updates})
     updated = await plans_collection.find_one({"_id": code})
@@ -176,7 +198,13 @@ async def my_subscriptions(current_user: dict = Depends(get_current_user)):
         out.append(item)
 
     active = [r for r in out if r["status"] == "active"]
-    pillars = await get_active_pillars(current_user["orgId"])
+    # Reuse the pillar set auth.py already computed for this request rather
+    # than recomputing it with another round of database queries. The React
+    # app calls /auth/me and /plans/mine back-to-back on every page load, so
+    # this was running the same work three times per boot.
+    pillars = current_user.get("activePillars")
+    if pillars is None:
+        pillars = await get_active_pillars(current_user["orgId"])
 
     monthly_total = 0.0
     for r in active:
@@ -244,14 +272,31 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
             )
 
     if plan.get("is_bundle"):
+        # Fixed double-billing bug: the individual-pillar branch below has
+        # had a same-plan duplicate guard for a long time, but the BUNDLE
+        # branch had none at all. Subscribing to "complete" twice (e.g. an
+        # owner switching monthly -> yearly, or a double-clicked button)
+        # left BOTH rows active and billed both -- ₹24,999/mo AND
+        # ₹2,39,990/yr on the same business, forever, with two renewal
+        # invoices raised every period.
+        existing_bundle = await organization_subscriptions.find_one(
+            {"org_id": target_org_id, "plan_code": plan_code, "status": "active"}
+        )
+        if existing_bundle:
+            raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this business.")
         # If subscribing to the bundle, cancel any individual pillar
         # subscriptions they're replacing (avoid double-billing in the demo).
         # Add-ons (e.g. a paid-for reel-making subscription) are NOT swept
         # up here -- the bundle already grants GROW, so an active add-on
         # that requires GROW stays valid and shouldn't be silently cancelled.
+        #
+        # Also fixed: the $nin list hardcoded the literal "complete" instead
+        # of this plan's own code, so any bundle other than "complete" would
+        # have swept away a *different* already-active bundle's row silently
+        # rather than being caught by the 409 above.
         addon_codes = [p["_id"] async for p in plans_collection.find({"is_addon": True})]
         await organization_subscriptions.update_many(
-            {"org_id": target_org_id, "status": "active", "plan_code": {"$nin": ["complete"] + addon_codes}},
+            {"org_id": target_org_id, "status": "active", "plan_code": {"$nin": [plan_code] + addon_codes}},
             {"$set": {"status": "cancelled", "cancelled_at": now()}},
         )
     else:
@@ -281,6 +326,12 @@ async def subscribe(body: dict, current_user: dict = Depends(get_current_user)):
         "price_at_purchase": price_at_purchase, "started_at": now(), "cancelled_at": None,
     }
     await organization_subscriptions.insert_one(doc)
+    # Close the check-then-insert race that both guards above are subject to
+    # (see app/utils/subscriptions.py). A double-clicked "Activate" button
+    # used to create two active rows for the same plan and bill the business
+    # twice every renewal, forever.
+    if not await enforce_single_active(organization_subscriptions, target_org_id, plan_code, doc["_id"]):
+        raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this business.")
 
     owner = await users.find_one({"org_id": target_org_id, "role": "owner"})
     if owner and owner["_id"] != current_user["id"]:

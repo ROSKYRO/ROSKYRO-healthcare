@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.db import queue_entries
 from app.auth import get_current_user
 from app.utils.plans import require_plan
+from app.utils.booking import ist_day_start, ist_date_str
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.counters import next_sequence
 
@@ -37,7 +38,13 @@ async def list_queue(orgId: str | None = None, current_user: dict = Depends(get_
     else:
         raise HTTPException(status_code=400, detail="orgId is required.")
 
-    today_start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # The Live Queue is a "today only" view, and "today" for a clinic in
+    # India means the IST calendar day -- not the UTC one. This used to cut
+    # at UTC midnight, which is 05:30 IST: a patient who checked in at, say,
+    # 05:00 IST vanished from the Live Queue half an hour later, mid-shift,
+    # while still physically sitting in the waiting room (and also dropped
+    # out of dashboard.py's queueWaiting count).
+    today_start = ist_day_start()
     rows = await queue_entries.find({"org_id": org_id, "checked_in_at": {"$gte": today_start}}).to_list(None)
     rows.sort(key=lambda e: e.get("token_number") or 0)
     return {"queue": to_out_many(rows)}
@@ -52,12 +59,17 @@ async def check_in(body: dict, current_user: dict = Depends(get_current_user)):
     if not patient_name:
         raise HTTPException(status_code=400, detail="patientName is required.")
 
-    today_start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Token numbers reset per IST calendar day, matching list_queue's window
+    # above. With the old UTC-midnight boundary the counter rolled over to
+    # token #1 at 05:30 IST while the previous day's tokens were still on
+    # screen -- two different patients holding "Token 1" in the same visible
+    # queue.
+    today_start = ist_day_start()
     # Atomic $inc per (org, day) counter -- not a read-then-write max() over
     # existing rows, which is a TOCTOU race: two patients checking in at the
     # same instant could both read the same max and be assigned the same
     # token_number. See app/utils/counters.py.
-    counter_id = f"queue_token|{current_user['orgId']}|{today_start.date().isoformat()}"
+    counter_id = f"queue_token|{current_user['orgId']}|{ist_date_str()}"
     next_token = await next_sequence(
         counter_id, bootstrap=lambda: _current_max_token(current_user["orgId"], today_start),
     )

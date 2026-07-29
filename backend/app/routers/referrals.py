@@ -1,3 +1,4 @@
+import asyncio
 import re
 
 from fastapi import APIRouter, HTTPException, Depends, Query
@@ -22,6 +23,13 @@ router = APIRouter(
     tags=["referrals"],
     dependencies=[Depends(get_current_user), Depends(require_plan("connect"))],
 )
+
+
+async def _none():
+    """Awaitable placeholder so an optional lookup can still take a slot in
+    an asyncio.gather() without special-casing the whole call."""
+    return None
+
 
 # Only these business types have the right to choose/create a referral to a
 # partner. Everyone else (diagnostic_lab, dental, skin_clinic, physiotherapy)
@@ -216,12 +224,19 @@ async def list_referrals(
             {"referral_code": {"$regex": needle, "$options": "i"}},
         ]
 
-    rows = await referrals.find(filt).sort("created_at", -1).limit(300).to_list(None)
-
+    # Fixed: the category filter used to be applied in Python AFTER the
+    # 300-row limit had already been taken. So the database returned the 300
+    # most recent referrals across ALL categories, and only then were the
+    # non-matching ones dropped -- meaning a busy business filtering by, say,
+    # "Radiology" saw only however many radiology referrals happened to fall
+    # inside its latest 300 overall, silently missing every older one, with
+    # no pagination anywhere in the UI to reach them. Folding it into the
+    # Mongo query means the limit now applies to matching rows.
     if category:
         cat = await partner_categories.find_one({"slug": category})
-        cat_id = cat["_id"] if cat else "__none__"
-        rows = [r for r in rows if r.get("category_id") == cat_id]
+        filt["category_id"] = cat["_id"] if cat else "__none__"
+
+    rows = await referrals.find(filt).sort("created_at", -1).limit(300).to_list(None)
 
     return {"referrals": await _enrich_list(rows)}
 
@@ -240,10 +255,23 @@ async def get_referral(referral_id: str, current_user: dict = Depends(get_curren
     if current_user["appShell"] == "partner" and partner_org_id != current_user["orgId"]:
         raise HTTPException(status_code=403, detail="Not authorized to view this referral.")
 
-    ro = await organizations.find_one({"_id": referral["referring_org_id"]})
-    po = await organizations.find_one({"_id": partner_org_id}) if partner_org_id else None
-    pc = await partner_categories.find_one({"_id": referral["category_id"]})
-    du = await users.find_one({"_id": referral["referring_user_id"]})
+    # These four lookups plus the three history/followup/notification reads
+    # below are all independent of one another, and each was a separate
+    # sequential round-trip to the database -- 7 serial hops to render one
+    # referral detail page. Run them concurrently instead.
+    ro, po, pc, du, history, followups, patient_notifications = await asyncio.gather(
+        organizations.find_one({"_id": referral["referring_org_id"]}),
+        organizations.find_one({"_id": partner_org_id}) if partner_org_id else _none(),
+        partner_categories.find_one({"_id": referral["category_id"]}),
+        users.find_one({"_id": referral["referring_user_id"]}),
+        referral_status_history.find({"referral_id": referral_id}).sort("changed_at", 1).to_list(None),
+        referral_followups.find({"referral_id": referral_id}).sort("created_at", -1).to_list(None),
+        # What the patient was actually told, and when -- surfaced to both
+        # the referring business and the partner so it's clear the patient
+        # already knows where they've been referred, without either side
+        # having to ask.
+        whatsapp_messages.find({"referral_id": referral_id}).sort("created_at", 1).to_list(None),
+    )
 
     out = to_out(referral)
     out["referring_org_name"] = ro.get("name") if ro else None
@@ -252,13 +280,6 @@ async def get_referral(referral_id: str, current_user: dict = Depends(get_curren
     out["category_name"] = pc.get("name") if pc else None
     out["referring_doctor_name"] = du.get("name") if du else None
     out["referring_doctor_email"] = du.get("email") if du else None
-
-    history = await referral_status_history.find({"referral_id": referral_id}).sort("changed_at", 1).to_list(None)
-    followups = await referral_followups.find({"referral_id": referral_id}).sort("created_at", -1).to_list(None)
-    # What the patient was actually told, and when -- surfaced to both the
-    # referring business and the partner so it's clear the patient already
-    # knows where they've been referred, without either side having to ask.
-    patient_notifications = await whatsapp_messages.find({"referral_id": referral_id}).sort("created_at", 1).to_list(None)
 
     return {
         "referral": out,
@@ -428,6 +449,17 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
         raise HTTPException(status_code=403, detail="Only the referring business, the partner who delivered the service, or ROSKYRO can mark a referral as fully completed.")
     if body.status == "sent" and referral["status"] == "pending_review" and not internal:
         raise HTTPException(status_code=403, detail="Only ROSKYRO ops can release a referral that is pending review.")
+    # Defensive: TRANSITIONS also allows "draft" -> "sent", and that path had
+    # NO authorization check at all -- the two rules above only cover the
+    # pending_review source and the partner/cancel/complete actions, so any
+    # authenticated user on the platform could have released another
+    # business's draft referral to a partner. Nothing writes status="draft"
+    # today (create_referral only ever writes "pending_review" or "sent"), so
+    # this is unreachable in the current build -- but the state machine
+    # declares the edge, and leaving an unguarded edge in it is exactly how
+    # this becomes a live hole the moment a "save as draft" button is added.
+    if body.status == "sent" and referral["status"] == "draft" and not (referring_side or internal):
+        raise HTTPException(status_code=403, detail="Only the referring business can send its own referral.")
 
     timestamp_field = {
         "sent": "sent_at", "accepted": "accepted_at", "declined": "declined_at",

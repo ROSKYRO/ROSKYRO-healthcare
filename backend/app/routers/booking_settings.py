@@ -4,6 +4,7 @@ from app.db import booking_settings
 from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.audit import log_audit
+from app.utils.booking import MAX_BOOKING_WINDOW_DAYS
 from app.utils.ids import new_id, now, to_out
 
 router = APIRouter(
@@ -85,6 +86,16 @@ async def patch_settings(body: dict, current_user: dict = Depends(get_current_us
             raise HTTPException(status_code=400, detail="bookingWindowDays must be a whole number.")
         if window_days < 1:
             raise HTTPException(status_code=400, detail="bookingWindowDays must be at least 1.")
+        # Added an upper bound to match the max="60" the form already
+        # enforces client-side. Without it, an API client (or anything not
+        # going through the React form) could store e.g. 100000, and the
+        # PUBLIC availability endpoint would then build 100,000 day entries,
+        # each with a full slot list, on every unauthenticated request --
+        # for every doctor at this business. utils/booking.py's
+        # upcoming_dates() clamps defensively too, so rows already stored
+        # with a larger value are capped on read rather than being served.
+        if window_days > MAX_BOOKING_WINDOW_DAYS:
+            raise HTTPException(status_code=400, detail=f"bookingWindowDays cannot be more than {MAX_BOOKING_WINDOW_DAYS}.")
         updates["booking_window_days"] = window_days
 
     if not updates:

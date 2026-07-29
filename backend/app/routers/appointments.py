@@ -1,11 +1,12 @@
 import io
+import math
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
-from app.db import appointments, organizations
+from app.db import appointments, booking_counters, organizations
 from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.ids import new_id, to_out, to_out_many
@@ -14,6 +15,61 @@ router = APIRouter(
     prefix="/api/appointments", tags=["appointments"],
     dependencies=[Depends(get_current_user), Depends(require_plan("manage"))],
 )
+
+# The same set queue.py and followups.py already whitelist their own status
+# values against. Two of these literals are load-bearing elsewhere:
+# public_booking.py excludes exactly "cancelled" when counting a slot's
+# occupancy, and dashboard.py sums revenue for exactly "completed".
+APPOINTMENT_STATUSES = ("scheduled", "confirmed", "completed", "cancelled", "no_show")
+
+
+def _coerce_money(value, field_label: str) -> float:
+    """Fixed: the old try/except caught TypeError/ValueError, but float("NaN")
+    and float("Infinity") both SUCCEED -- so a non-finite value was written
+    to the appointment document, and only blew up later, on read. FastAPI
+    renders with json.dumps(allow_nan=False), which raises "Out of range
+    float values are not JSON compliant"; because the insert had already
+    committed, that left GET /api/appointments, the Booking Settings page
+    and the dashboard revenue sum returning 500 PERMANENTLY, with no UI path
+    to delete the poisoned row."""
+    try:
+        amount = float(value if value not in (None, "") else 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field_label} must be numeric.")
+    if not math.isfinite(amount):
+        raise HTTPException(status_code=400, detail=f"{field_label} must be a real number.")
+    return amount
+
+
+async def _release_slot_counter(existing: dict) -> None:
+    """Give a cancelled QR booking's seat back to the slot counter.
+
+    Fixed -- this was a real, permanently-worsening divergence between the
+    two things that both claim to know whether a slot is free:
+      - public_booking.py's availability endpoint computes what's taken from
+        the live appointment rows, EXCLUDING status "cancelled";
+      - public_booking.py's book endpoint enforces capacity against the
+        atomic `booking_counters` document instead.
+    Nothing anywhere decremented that counter when an appointment was
+    cancelled (grep confirms booking_counters was only ever written inside
+    public_booking.py). So: Dr A has capacity 1, patient P books 10:00
+    (counter -> 1), the front desk cancels it, availability now advertises
+    10:00 as open with remaining: 1, and every patient who picks it gets
+    409 "That slot just filled up". That slot was unbookable forever, and
+    one more slot broke this way with every cancellation.
+
+    Only QR bookings touch a counter (`booked_via == "qr_booking"`), and the
+    guard below stops a double-cancel from pushing the count negative.
+    """
+    if existing.get("booked_via") != "qr_booking" or existing.get("status") == "cancelled":
+        return
+    doctor_id = existing.get("doctor_id")
+    date = existing.get("appointment_date")
+    time = str(existing.get("appointment_time") or "")[:5]
+    if not (doctor_id and date and time):
+        return
+    slot_key = f"slot|{existing['org_id']}|{doctor_id}|{date}|{time}"
+    await booking_counters.update_one({"_id": slot_key, "count": {"$gt": 0}}, {"$inc": {"count": -1}})
 
 
 @router.get("")
@@ -209,10 +265,13 @@ async def create_appointment(body: dict, current_user: dict = Depends(get_curren
     # endpoint (line ~157/160) and dashboard.py's monthly revenue sum both
     # do exactly that, so one bad appointment could take down the whole
     # business's dashboard and revenue report, not just this request.
-    try:
-        revenue_amount = float(body.get("revenueAmount") or 0)
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="revenueAmount must be numeric.")
+    # Hardened further: float() happily accepts the strings "NaN" and
+    # "Infinity", so the old coercion let a NaN through into the document.
+    # FastAPI serialises with json.dumps(allow_nan=False), which then raises
+    # AFTER the row is already written -- permanently 500-ing every list /
+    # revenue / dashboard response for that business, with no UI path to
+    # delete the poisoned row. _coerce_money rejects it at the door.
+    revenue_amount = _coerce_money(body.get("revenueAmount"), "revenueAmount")
 
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "patient_name": patient_name,
@@ -245,14 +304,24 @@ async def patch_appointment(appointment_id: str, body: dict, current_user: dict 
 
     updates = {}
     if body.get("status"):
+        # Fixed: status was written through completely unvalidated, unlike
+        # every sibling router (queue.py and followups.py both whitelist).
+        # A typo'd value such as "canceled" (one 'l') returned 200 OK, but
+        # every consumer matches on the exact string "cancelled": the
+        # appointment stayed counted as occupying its slot in the public
+        # availability calculation AND silently dropped out of the revenue
+        # report -- a wrong number on the owner's dashboard with no error
+        # anywhere to trace it back to.
+        if body["status"] not in APPOINTMENT_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Must be one of: {', '.join(APPOINTMENT_STATUSES)}.",
+            )
         updates["status"] = body["status"]
     if "revenueAmount" in body:
         # Same fix as create_appointment above -- this used to pass the
         # raw client value straight through with no numeric coercion.
-        try:
-            updates["revenue_amount"] = float(body["revenueAmount"] or 0)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="revenueAmount must be numeric.")
+        updates["revenue_amount"] = _coerce_money(body["revenueAmount"], "revenueAmount")
     if body.get("paymentStatus"):
         if body["paymentStatus"] not in ("not_required", "pending", "paid"):
             raise HTTPException(status_code=400, detail="Invalid paymentStatus.")
@@ -261,5 +330,14 @@ async def patch_appointment(appointment_id: str, body: dict, current_user: dict 
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
     await appointments.update_one({"_id": appointment_id}, {"$set": updates})
+    # Cancelling a QR booking must give its seat back. Slot availability on
+    # the public booking page is computed from live appointments (excluding
+    # "cancelled"), but the actual booking is gated by an atomic counter in
+    # booking_counters -- and nothing ever decremented that counter on
+    # cancellation. So the slot displayed as FREE to the next patient while
+    # the counter still said FULL, and every attempt to book it 409'd
+    # forever. The divergence was permanent and grew with every cancellation.
+    if updates.get("status") == "cancelled":
+        await _release_slot_counter(existing)
     updated = await appointments.find_one({"_id": appointment_id})
     return {"appointment": to_out(updated)}

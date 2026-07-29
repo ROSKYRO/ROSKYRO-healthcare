@@ -22,22 +22,42 @@ async def team_roster():
     ordering hazard, but kept explicit for clarity)."""
     all_users = await users.find({"role": {"$regex": "^roskyro_"}}).sort([("role", 1), ("name", 1)]).to_list(None)
 
-    # One query for every internal user's tasks, then tally per-user in
-    # Python -- not 3 count_documents() calls PER user (a 1+3*N query
-    # pattern that scaled with headcount), same batch-fetch fix used
-    # elsewhere in this file's list_tasks (org/assigned-user $in lookups).
+    # PERFORMANCE (round 18): this already avoided the old 1+3*N
+    # count_documents() pattern by batch-fetching, but it swung to the other
+    # extreme -- `tasks.find({"assigned_to": {"$in": user_ids}}).to_list(None)`
+    # pulls EVERY task ever assigned to any internal user across the whole
+    # platform, forever, with no bound at all, purely to produce three
+    # integers per person. After a year of operations that is the entire
+    # tasks collection crossing the wire and being materialised in this
+    # worker's memory on every load of the Team page.
+    #
+    # Same fix already proven in tasks_summary() below: let Mongo do the
+    # counting with $group/$sum/$cond and return exactly one small row per
+    # user. right_now is deliberately NAIVE here for the same reason
+    # documented in tasks_summary -- see that function's comment and
+    # as_aware()'s docstring in app/utils/ids.py.
     user_ids = [u["_id"] for u in all_users]
-    all_tasks = await tasks.find({"assigned_to": {"$in": user_ids}}).to_list(None) if user_ids else []
-    right_now = now()
-    counts_by_user: dict = {}
-    for t in all_tasks:
-        c = counts_by_user.setdefault(t["assigned_to"], {"open": 0, "overdue": 0, "completed": 0})
-        if t["status"] == "done":
-            c["completed"] += 1
-        else:
-            c["open"] += 1
-            if t.get("sla_due_at") and as_aware(t["sla_due_at"]) < right_now:
-                c["overdue"] += 1
+    right_now = now().replace(tzinfo=None)
+    grouped = await tasks.aggregate([
+        {"$match": {"assigned_to": {"$in": user_ids}}},
+        {"$group": {
+            "_id": "$assigned_to",
+            "completed": {"$sum": {"$cond": [{"$eq": ["$status", "done"]}, 1, 0]}},
+            "open": {"$sum": {"$cond": [{"$ne": ["$status", "done"]}, 1, 0]}},
+            "overdue": {"$sum": {"$cond": [
+                {"$and": [
+                    {"$ne": ["$status", "done"]},
+                    {"$ne": ["$sla_due_at", None]},
+                    {"$lt": ["$sla_due_at", right_now]},
+                ]},
+                1, 0,
+            ]}},
+        }},
+    ]).to_list(None) if user_ids else []
+    counts_by_user = {
+        g["_id"]: {"open": g["open"], "overdue": g["overdue"], "completed": g["completed"]}
+        for g in grouped
+    }
 
     roster = []
     for u in all_users:

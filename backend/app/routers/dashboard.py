@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Depends
 
@@ -7,6 +8,7 @@ from app.db import (
     invoices, partners, statements, organizations, settlements, users,
 )
 from app.auth import get_current_user, require_internal
+from app.utils.booking import IST_OFFSET, ist_day_start, ist_date_str
 from app.utils.ids import now, to_out_many
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
@@ -20,26 +22,49 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
     if current_user["appShell"] != "customer":
         raise HTTPException(status_code=403, detail="Customer dashboard only.")
     org_id = current_user["orgId"]
-    this_month = now().strftime("%Y-%m")
+    # "Today" and "this month" here mean the clinic's IST calendar day/month,
+    # matching how appointment_date strings are produced everywhere else
+    # (utils/booking.py's upcoming_dates). Previously these read plain UTC,
+    # so between 00:00 and 05:29 IST the dashboard showed YESTERDAY's
+    # appointments as "today's" -- and on the 1st of a month, the previous
+    # month's revenue as "this month".
+    today_str = ist_date_str()
+    this_month = today_str[:7]
     pillars = current_user.get("activePillars") or set()
     has_grow = "grow" in pillars
     has_manage = "manage" in pillars
     has_connect = "connect" in pillars
+    # First instant of the current IST month, expressed in UTC (stored
+    # timestamps are UTC). Note this can't be done by .replace(day=1) on the
+    # UTC value, because IST midnight is 18:30 UTC on the *previous* date.
+    month_start = (ist_day_start() + IST_OFFSET).replace(day=1) - IST_OFFSET
 
-    today_str = now().date().isoformat()
-    today_appts = await appointments.find({"org_id": org_id, "appointment_date": today_str}).sort("appointment_time", 1).to_list(None)
-    new_patients_month = await appointments.count_documents({
-        "org_id": org_id, "is_new_patient": True,
-        "appointment_date": {"$regex": f"^{this_month}"},
-    })
-    completed_appts_month = await appointments.find({
-        "org_id": org_id, "appointment_date": {"$regex": f"^{this_month}"}, "status": "completed",
-    }).to_list(None)
+    # These five reads are completely independent of one another, and every
+    # one of them is a full network round-trip to Atlas. Run them
+    # concurrently instead of one-after-another: at a ~10ms RTT this alone
+    # takes the dashboard's DB time from ~5 serial hops down to ~1.
+    (
+        today_appts,
+        new_patients_month,
+        completed_appts_month,
+        completed_tasks_month,
+        pending_approvals,
+    ) = await asyncio.gather(
+        appointments.find({"org_id": org_id, "appointment_date": today_str}).sort("appointment_time", 1).to_list(None),
+        appointments.count_documents({
+            "org_id": org_id, "is_new_patient": True,
+            "appointment_date": {"$regex": f"^{this_month}"},
+        }),
+        appointments.find({
+            "org_id": org_id, "appointment_date": {"$regex": f"^{this_month}"}, "status": "completed",
+        }).to_list(None),
+        tasks.count_documents({
+            "org_id": org_id, "status": "done",
+            "completed_at": {"$gte": month_start},
+        }),
+        approvals.find({"org_id": org_id, "status": "pending"}).sort("created_at", -1).to_list(None),
+    )
     revenue_month = sum(float(a.get("revenue_amount") or 0) for a in completed_appts_month)
-    completed_tasks_month = await tasks.count_documents({
-        "org_id": org_id, "status": "done",
-        "completed_at": {"$gte": now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)},
-    })
 
     response = {
         "activePillars": list(pillars),
@@ -47,7 +72,7 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         "newPatientsThisMonth": new_patients_month,
         "revenueThisMonth": revenue_month,
         "completedWorkThisMonth": completed_tasks_month,
-        "pendingApprovals": [],
+        "pendingApprovals": to_out_many(pending_approvals),
         "reviews": None,
         "visibilityScore": None,
         "marketingPerformance": [],
@@ -56,27 +81,28 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         "manageSnapshot": None,
     }
 
-    pending_approvals = await approvals.find({"org_id": org_id, "status": "pending"}).sort("created_at", -1).to_list(None)
-    response["pendingApprovals"] = to_out_many(pending_approvals)
-
     if has_grow:
         # Aggregate the average/count in Mongo instead of pulling every
         # review document for this org over the wire just to average one
         # field in Python -- a business with years of reviews would
         # otherwise ship thousands of full documents on every single
         # dashboard load just to compute two numbers.
-        review_agg = await reviews.aggregate([
-            {"$match": {"org_id": org_id}},
-            {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}, "total": {"$sum": 1}}},
-        ]).to_list(None)
+        # All four of these are independent, so they run concurrently.
+        review_agg, vis_list, mp, latest_report = await asyncio.gather(
+            reviews.aggregate([
+                {"$match": {"org_id": org_id}},
+                {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}, "total": {"$sum": 1}}},
+            ]).to_list(None),
+            visibility_score_history.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None),
+            marketing_performance.find({"org_id": org_id, "period_month": this_month}).to_list(None),
+            reports.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None),
+        )
         avg_rating = round(review_agg[0]["avg_rating"] or 0, 2) if review_agg else 0
         total_reviews = review_agg[0]["total"] if review_agg else 0
         response["reviews"] = {"average": avg_rating, "total": total_reviews}
 
-        vis_list = await visibility_score_history.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None)
         response["visibilityScore"] = to_out_many(vis_list)[0] if vis_list else None
 
-        mp = await marketing_performance.find({"org_id": org_id, "period_month": this_month}).to_list(None)
         by_channel: dict = {}
         for row in mp:
             ch = by_channel.setdefault(row["channel"], {"channel": row["channel"], "impressions": 0, "clicks": 0, "leads": 0})
@@ -85,7 +111,6 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
             ch["leads"] += row.get("leads") or 0
         response["marketingPerformance"] = list(by_channel.values())
 
-        latest_report = await reports.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None)
         response["latestMonthlyReport"] = to_out_many(latest_report)[0] if latest_report else None
 
     if has_connect:
@@ -99,17 +124,22 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         response["referralsSummary"] = [{"status": r["_id"], "count": r["count"]} for r in status_agg]
 
     if has_manage:
-        queue_waiting = await queue_entries.count_documents({
-            "org_id": org_id, "status": "waiting",
-            "checked_in_at": {"$gte": now().replace(hour=0, minute=0, second=0, microsecond=0)},
-        })
-        followups_due = await patient_followups.count_documents({
-            "org_id": org_id, "status": "pending", "due_date": {"$lte": today_str},
-        })
-        unpaid_agg = await invoices.aggregate([
-            {"$match": {"org_id": org_id, "status": {"$in": ["sent", "overdue"]}}},
-            {"$group": {"_id": None, "n": {"$sum": 1}, "total": {"$sum": "$total"}}},
-        ]).to_list(None)
+        queue_waiting, followups_due, unpaid_agg = await asyncio.gather(
+            # IST day boundary, matching routers/queue.py's Live Queue window.
+            # With the old UTC-midnight cut this count and the Live Queue page
+            # itself disagreed for the first 5.5 hours of every IST day.
+            queue_entries.count_documents({
+                "org_id": org_id, "status": "waiting",
+                "checked_in_at": {"$gte": ist_day_start()},
+            }),
+            patient_followups.count_documents({
+                "org_id": org_id, "status": "pending", "due_date": {"$lte": today_str},
+            }),
+            invoices.aggregate([
+                {"$match": {"org_id": org_id, "status": {"$in": ["sent", "overdue"]}}},
+                {"$group": {"_id": None, "n": {"$sum": 1}, "total": {"$sum": "$total"}}},
+            ]).to_list(None),
+        )
         response["manageSnapshot"] = {
             "queueWaiting": queue_waiting,
             "followupsDue": followups_due,
