@@ -15,6 +15,8 @@ POST /settlements/marketing-payouts being a deliberate per-period admin
 action, not an automatic background job -- there's no billing gateway or
 scheduler in this build).
 """
+import calendar
+
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
@@ -47,6 +49,42 @@ def _is_renewal_period_due(started_at, billing_cycle: str, period: str) -> bool:
         return p_month == started_at.month and p_year > started_at.year
     # monthly
     return (p_year, p_month) > (started_at.year, started_at.month)
+
+
+def _renewal_due_date(started_at, billing_cycle: str, period: str):
+    """Fixed (round 19): the specific calendar date within `period`
+    ("YYYY-MM") this subscription's charge is actually due -- the exact
+    day-of-month app/utils/plans.py's next_renewal_date() already promises
+    on the business's Plans & Billing page ("Renews on 15 Aug 2026"), same
+    anchor-day-clamped-to-month-length math, just evaluated directly at
+    `period` instead of walked forward one cycle at a time.
+
+    Before this, a generated renewal charge carried ONLY the period
+    ("2026-08") with no day attached at all -- so a business's invoice for
+    "period 2026-08" had no way to be reconciled against the specific
+    anniversary date shown elsewhere in the product, and two subscriptions
+    started on different days of the month were indistinguishable once
+    grouped into the same period. Stamping the true due date closes that
+    gap.
+
+    Deliberately does NOT change WHEN a charge can be generated or make
+    generation date-gated -- ROSKYRO's admin team still runs "Generate
+    Renewal Charges" for a period as one manual, in-advance action (see
+    this module's docstring), exactly as before; only what date that
+    charge claims to be for is corrected. Nothing here touches an
+    already-generated charge, so no existing customer is re-billed or
+    refunded by this change.
+
+    Returns None when `period` isn't a genuine renewal period for this
+    subscription at all (mirrors _is_renewal_period_due).
+    """
+    if not _is_renewal_period_due(started_at, billing_cycle, period):
+        return None
+    started_at = as_aware(started_at)
+    anchor_day = started_at.day
+    p_year, p_month = int(period[:4]), int(period[5:7])
+    last_day = calendar.monthrange(p_year, p_month)[1]
+    return started_at.replace(year=p_year, month=p_month, day=min(anchor_day, last_day))
 
 
 async def _next_invoice_number() -> str:
@@ -110,6 +148,7 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
             continue
         org = orgs_by_id.get(sub["org_id"])
         plan = plans_by_code.get(sub["plan_code"])
+        due_date = _renewal_due_date(sub["started_at"], sub["billing_cycle"], body.period)
         charge_id = new_id()
         try:
             await subscription_renewals.insert_one({
@@ -118,6 +157,7 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
                 "subscription_id": sub["_id"], "plan_code": sub["plan_code"],
                 "plan_name": plan.get("name") if plan else sub["plan_code"],
                 "billing_cycle": sub["billing_cycle"], "period": body.period,
+                "due_date": due_date,
                 "amount": sub.get("price_at_purchase") or 0,
                 "invoice_number": await _next_invoice_number(),
                 "status": "pending",
@@ -138,10 +178,14 @@ async def generate_renewal_charges(body: GenerateBody, current_user: dict = Depe
         created += 1
         owner_user = owner_by_org_id.get(sub["org_id"])
         if owner_user:
+            # Fixed (round 19): names the actual anniversary date (matching
+            # what Plans & Billing already shows) instead of only the
+            # calendar period, so the reminder and the promise agree.
+            due_label = due_date.strftime("%d %b %Y") if due_date else body.period
             await notify(
                 owner_user["_id"], "subscription_renewal_due",
                 f"{plan.get('name') if plan else sub['plan_code']} renewal due",
-                f"₹{sub.get('price_at_purchase') or 0} for {body.period} -- pay via UPI and mark it paid from Plans & Billing.",
+                f"₹{sub.get('price_at_purchase') or 0} due {due_label} -- pay via UPI and mark it paid from Plans & Billing.",
                 "subscription_renewal", charge_id,
             )
 

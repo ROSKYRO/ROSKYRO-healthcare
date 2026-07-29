@@ -4,6 +4,7 @@ from app.db import queue_entries
 from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.booking import ist_day_start, ist_date_str
+from app.utils.patients import safe_resolve_patient_id
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.counters import next_sequence
 
@@ -74,9 +75,21 @@ async def check_in(body: dict, current_user: dict = Depends(get_current_user)):
         counter_id, bootstrap=lambda: _current_max_token(current_user["orgId"], today_start),
     )
 
+    # Round 19: check-ins are linked too, so that a later
+    # POST /api/patients/link-history run and any future
+    # queue-history view resolve to the right person rather than the
+    # right *name*. create=False -- a walk-in who has never been
+    # registered shouldn't silently manufacture a patient record from
+    # the queue screen; the appointment/invoice paths are where a
+    # patient legitimately comes into existence.
+    patient_id = await safe_resolve_patient_id(
+        current_user["orgId"], patient_name, body.get("patientPhone"), create=False
+    )
+
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "appointment_id": body.get("appointmentId"),
-        "patient_name": patient_name, "token_number": next_token, "doctor_name": body.get("doctorName"),
+        "patient_name": patient_name, "patient_id": patient_id,
+        "token_number": next_token, "doctor_name": body.get("doctorName"),
         "status": "waiting", "checked_in_at": now(), "called_at": None, "completed_at": None,
     }
     await queue_entries.insert_one(doc)

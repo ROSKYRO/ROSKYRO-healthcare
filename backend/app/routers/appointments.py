@@ -9,6 +9,7 @@ from fastapi.responses import Response
 from app.db import appointments, booking_counters, organizations
 from app.auth import get_current_user
 from app.utils.plans import require_plan
+from app.utils.patients import safe_resolve_patient_id
 from app.utils.ids import new_id, to_out, to_out_many
 
 router = APIRouter(
@@ -273,8 +274,18 @@ async def create_appointment(body: dict, current_user: dict = Depends(get_curren
     # delete the poisoned row. _coerce_money rejects it at the door.
     revenue_amount = _coerce_money(body.get("revenueAmount"), "revenueAmount")
 
+    # Round 19: bind this appointment to a real patient record instead of
+    # leaving a bare name string behind. patients.py's history view joins
+    # on this id, so without it two same-named patients at the same clinic
+    # end up sharing one clinical timeline. Never fails the booking --
+    # see safe_resolve_patient_id()'s docstring.
+    patient_id = await safe_resolve_patient_id(
+        current_user["orgId"], patient_name, body.get("patientPhone")
+    )
+
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "patient_name": patient_name,
+        "patient_id": patient_id,
         "patient_phone": body.get("patientPhone"), "doctor_name": body.get("doctorName"),
         "appointment_date": appointment_date, "appointment_time": body.get("appointmentTime"),
         "status": "scheduled", "source": body.get("source") or "walk_in",

@@ -9,6 +9,7 @@ from app.utils.booking import doctor_slots_for_date, upcoming_dates
 from app.utils.ids import new_id, now, to_out
 from app.utils.counters import next_sequence
 from app.utils.phone import normalize_phone
+from app.utils.patients import safe_resolve_patient_id
 from app.utils.rate_limit import enforce_rate_limit
 
 router = APIRouter(prefix="/api/public/booking", tags=["public-booking"])
@@ -221,8 +222,19 @@ async def book_slot(org_id: str, body: BookSlotBody, request: Request = None):
     # entirely and book straight through.
     payment_status = "paid" if fee > 0 else "not_required"
 
+    # Round 19: a QR booking is where the same-name collision bites
+    # hardest -- the patient types their own name, nobody at the clinic
+    # is checking it against an existing record, and the phone number is
+    # mandatory here (validated above), so identity is actually reliable
+    # on this path. Resolving with create=True means a first-time QR
+    # patient gets a real patient record and every later visit,
+    # invoice and follow-up attaches to it. safe_ prefix: identity
+    # bookkeeping must never be the reason a paid booking fails.
+    patient_id = await safe_resolve_patient_id(org_id, patient_name, patient_phone)
+
     doc = {
-        "_id": new_id(), "org_id": org_id, "patient_name": patient_name, "patient_phone": patient_phone,
+        "_id": new_id(), "org_id": org_id, "patient_name": patient_name,
+        "patient_id": patient_id, "patient_phone": patient_phone,
         "doctor_id": doctor_id, "doctor_name": doctor.get("name"), "appointment_date": appointment_date,
         "appointment_time": appointment_time, "status": "scheduled", "source": "qr_booking",
         "is_new_patient": True, "revenue_amount": fee, "booked_via": "qr_booking",

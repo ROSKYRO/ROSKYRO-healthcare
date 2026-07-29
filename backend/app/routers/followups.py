@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.db import patient_followups
 from app.auth import get_current_user
 from app.utils.plans import require_plan
+from app.utils.patients import safe_resolve_patient_id
 from app.utils.ids import new_id, now, to_out, to_out_many
 
 router = APIRouter(
@@ -42,8 +43,16 @@ async def create_followup(body: dict, current_user: dict = Depends(get_current_u
     if not patient_name or not reason or not due_date:
         raise HTTPException(status_code=400, detail="patientName, reason and dueDate are required.")
 
+    # Round 19: see the same call in appointments.py's create_appointment --
+    # a follow-up has to hang off a patient id, not a name string, or it
+    # surfaces on a same-named stranger's history page.
+    patient_id = await safe_resolve_patient_id(
+        current_user["orgId"], patient_name, body.get("patientPhone")
+    )
+
     doc = {
         "_id": new_id(), "org_id": current_user["orgId"], "patient_name": patient_name,
+        "patient_id": patient_id,
         "patient_phone": body.get("patientPhone"), "reason": reason, "due_date": due_date,
         "notes": body.get("notes"), "status": "pending", "completed_at": None,
         "created_by": current_user["id"], "created_at": now(),

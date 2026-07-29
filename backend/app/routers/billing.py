@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from app.db import invoices
 from app.auth import get_current_user
 from app.utils.plans import require_plan
+from app.utils.patients import safe_resolve_patient_id
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.counters import next_sequence
 
@@ -69,9 +70,17 @@ async def create_invoice(body: dict, current_user: dict = Depends(get_current_us
     totals = compute_totals(line_items, body.get("discount"), body.get("taxRate"))
     invoice_number = await next_invoice_number()
 
+    # Round 19: an invoice on the wrong patient's history page is a
+    # billing-privacy problem, not just a display one -- bind it to the
+    # patient id. See app/utils/patients.py.
+    patient_id = await safe_resolve_patient_id(
+        current_user["orgId"], patient_name, body.get("patientPhone")
+    )
+
     doc = {
         "_id": new_id(), "invoice_number": invoice_number, "org_id": current_user["orgId"],
-        "patient_name": patient_name, "patient_phone": body.get("patientPhone"),
+        "patient_name": patient_name, "patient_id": patient_id,
+        "patient_phone": body.get("patientPhone"),
         "appointment_id": body.get("appointmentId"), "line_items": line_items,
         "subtotal": totals["subtotal"], "discount": body.get("discount") or 0, "tax": totals["tax"],
         "total": totals["total"], "due_date": body.get("dueDate"), "created_by": current_user["id"],
