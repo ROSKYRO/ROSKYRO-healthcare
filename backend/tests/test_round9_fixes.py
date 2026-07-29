@@ -15,7 +15,7 @@ bookingWindowDays with zero validation, and both feed the PUBLIC
 """
 import pytest
 
-from app.utils.booking import upcoming_dates
+from app.utils.booking import MAX_BOOKING_WINDOW_DAYS, upcoming_dates
 
 DEMO_PASSWORD = "Roskyro@123"
 SUNRISE_EMAIL = "sunrise.family.clinic@example.com"
@@ -37,11 +37,29 @@ def _login_full(client, identifier, password=DEMO_PASSWORD):
     return {"Authorization": f"Bearer {body['token']}"}, body["user"]["orgId"]
 
 
-def test_upcoming_dates_crashes_on_non_numeric_window_pre_fix_repro():
-    """Documents the exact downstream failure mode this fix guards
-    against, independent of the HTTP-level validation test below."""
-    with pytest.raises(ValueError):
-        upcoming_dates("abc")
+def test_upcoming_dates_survives_non_numeric_window():
+    """SUPERSEDED in round 18. This test previously asserted that
+    upcoming_dates("abc") RAISES ValueError -- it documented the downstream
+    crash that round 9's HTTP-level validation (test_patch_booking_settings_
+    rejects_non_numeric_window_days, below, still passing) was added to
+    prevent.
+
+    Round 18 made the helper itself defensive as a second layer, because the
+    write-side validator only protects rows written AFTER it shipped: a row
+    already sitting in the production database from before round 9 would
+    still take down the PUBLIC, unauthenticated patient booking page with a
+    raw 500 for that entire business. It now falls back to the 7-day default
+    instead of raising, and the window is additionally clamped to the same
+    1..60 range the Booking Settings form enforces client-side.
+
+    The round-9 guarantee is unchanged and still asserted below: bad input
+    is rejected at the API with a 400 and never stored."""
+    assert len(upcoming_dates("abc")) == 7
+    assert len(upcoming_dates(None)) == 7
+    # Clamped, not obeyed -- a pre-existing row saying 100000 must not make
+    # the public availability endpoint build 100,000 day entries per request.
+    assert len(upcoming_dates(100000)) == MAX_BOOKING_WINDOW_DAYS
+    assert len(upcoming_dates(0)) == 1
 
 
 def test_patch_booking_settings_rejects_non_numeric_window_days(client):
