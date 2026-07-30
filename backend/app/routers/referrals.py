@@ -35,7 +35,17 @@ async def _none():
 # partner. Everyone else (diagnostic_lab, dental, skin_clinic, physiotherapy)
 # can still list themselves as a Networking Marketing partner to be chosen by others, but
 # cannot initiate a referral of their own -- see create_referral below.
-REFERRAL_CREATOR_BUSINESS_TYPES = {"clinic", "hospital", "eye_hospital"}
+#
+# "eye_hospital" predates round 22's business-type taxonomy rewrite (see
+# app/utils/business_taxonomy.py) -- kept here so any org that registered
+# under the old taxonomy keeps its existing referral-creation right. Under
+# the new taxonomy an eye-focused org registers as business_type="hospital"
+# with business_category="eye_hospital" (already covered, since "hospital" is
+# in this set) or as the new standalone business_type="eye_care_center",
+# which is added here as that type's direct equivalent -- this is the only
+# new-taxonomy addition; no other new business type gains referral-creation
+# rights that the old taxonomy didn't already grant.
+REFERRAL_CREATOR_BUSINESS_TYPES = {"clinic", "hospital", "eye_hospital", "eye_care_center"}
 
 # Referral status machine — mirrors the HREN workflow: Patient Needs Service
 # -> Doctor Creates Referral -> System Generates Referral -> (ROSKYRO Review,

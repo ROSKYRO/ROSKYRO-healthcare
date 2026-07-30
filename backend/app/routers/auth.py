@@ -10,16 +10,22 @@ from app.utils.audit import log_audit
 from app.utils.ids import new_id, now
 from app.utils.phone import normalize_phone
 from app.utils.rate_limit import enforce_rate_limit
+from app.utils.business_taxonomy import ALL_VALID_BUSINESS_CATEGORIES
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# The size/scale classification a business picks at signup -- deliberately
-# a SEPARATE field from business_type (which is the business's specialty:
-# clinic/dental/skin_clinic/etc, used to gate who can create referrals).
-# business_category is purely informational/segmentation (shown on the
-# business's own profile) and never affects pricing -- pricing only ever
-# differs between the business vs partner AUDIENCE, not between these 3.
-BUSINESS_CATEGORIES = {"solo_doctor", "clinic", "hospital"}
+# business_category is the specialty dropdown, dependent on whichever
+# business_type the org picked at signup (see app/utils/business_taxonomy.py
+# for the full type -> category breakdown, round 22). It's purely
+# informational/segmentation (shown on the business's own profile) and never
+# affects pricing -- pricing only ever differs between the business vs
+# partner AUDIENCE, never by business_category.
+#
+# Validated against the union of every type's valid categories, PLUS the
+# pre-round-22 solo_doctor/clinic/hospital values (orgs registered before
+# this round still carry those) -- not scoped to whichever business_type was
+# submitted alongside it; see business_taxonomy.py's module docstring for why.
+BUSINESS_CATEGORIES = ALL_VALID_BUSINESS_CATEGORIES
 
 
 def public_user(user: dict) -> dict:
