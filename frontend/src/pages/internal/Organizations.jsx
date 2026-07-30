@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../../lib/api';
 import { Card, Table, Badge, Button, PageLoading, formatDate, formatCurrency } from '../../components/ui';
+import { BUSINESS_CATEGORY_LABELS } from '../../lib/businessTaxonomy';
 
 const PILLAR_TONE = { grow: 'completed', manage: 'sent', connect: 'pending' };
-const BUSINESS_CATEGORY_LABELS = { solo_doctor: 'Solo Doctor', clinic: 'Clinic', hospital: 'Hospital (All Category)' };
 
 export default function Organizations() {
   const [orgs, setOrgs] = useState(null);
