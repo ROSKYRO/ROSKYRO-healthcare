@@ -62,6 +62,11 @@ const NAV = {
     // centralized here instead of each business sending its own.
     { to: '/team/whatsapp-queue', label: 'WhatsApp Queue', icon: '\u{1F4F2}' },
     { to: '/team/roster', label: 'Team Roster', icon: '\u{1F465}' },
+    // Super-admin only — this is where Team Roster's names/roles actually
+    // come from: add a new internal hire, edit an existing one's
+    // name/role/phone, or deactivate someone who's left. See
+    // routers/team_members.py.
+    { to: '/team/manage-team', label: 'Manage Team', icon: '\u{1F9D1}\u{200D}\u{1F4BC}', roles: ['roskyro_admin'] },
     // Super-admin only — the consolidated Earnings Wallet rolls up both
     // revenue streams (Marketing Fees + subscription renewals) and the
     // business-wise payout breakdown in one place, same restriction as
