@@ -3,36 +3,26 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button, Input, Select } from '../components/ui';
 import logo from '../assets/logo.png';
-
-const BUSINESS_TYPES = [
-  ['clinic', 'Clinic'],
-  ['hospital', 'Hospital'],
-  ['diagnostic_lab', 'Diagnostic Lab'],
-  ['dental', 'Dental Clinic'],
-  ['skin_clinic', 'Skin Clinic'],
-  ['physiotherapy', 'Physiotherapy Centre'],
-  ['eye_hospital', 'Eye Hospital'],
-];
-
-// Size/scale classification -- separate from "Business type" above (which
-// is the specialty). Informational only: shown on your business profile,
-// never affects pricing (pricing only ever differs between the Business
-// vs Partner side, not between these three).
-export const BUSINESS_CATEGORIES = [
-  ['solo_doctor', 'Solo Doctor'],
-  ['clinic', 'Clinic'],
-  ['hospital', 'Hospital (All Category)'],
-];
+import { BUSINESS_TYPES, categoriesForType } from '../lib/businessTaxonomy';
 
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ orgName: '', businessType: 'clinic', businessCategory: 'clinic', city: '', ownerName: '', email: '', phone: '', password: '' });
+  const [form, setForm] = useState({ orgName: '', businessType: 'clinic', businessCategory: categoriesForType('clinic')[0][0], city: '', ownerName: '', email: '', phone: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   function set(key) {
     return (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  }
+
+  // Business category is dependent on business type (e.g. Hospital ->
+  // Cardiac Hospital / Trauma Center / ...; Clinic -> Cardiology /
+  // Dermatology / ...) -- switching type resets category to that type's
+  // first option so a stale, no-longer-valid category never lingers.
+  function setBusinessType(e) {
+    const businessType = e.target.value;
+    setForm((f) => ({ ...f, businessType, businessCategory: categoriesForType(businessType)[0][0] }));
   }
 
   async function handleSubmit(e) {
@@ -64,11 +54,11 @@ export default function Register() {
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <Input label="Business name" required value={form.orgName} onChange={set('orgName')} placeholder="Sunrise Family Clinic" />
           <div className="grid grid-cols-2 gap-3">
-            <Select label="Business type" value={form.businessType} onChange={set('businessType')}>
+            <Select label="Business type" value={form.businessType} onChange={setBusinessType}>
               {BUSINESS_TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
             <Select label="Business category" value={form.businessCategory} onChange={set('businessCategory')}>
-              {BUSINESS_CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {categoriesForType(form.businessType).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </Select>
           </div>
           <Input label="City" value={form.city} onChange={set('city')} placeholder="Pune" />
