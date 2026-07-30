@@ -3,16 +3,13 @@ import { Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, StatTile, Badge, PageLoading, EmptyState, Button, formatCurrency } from '../../components/ui';
+import { BUSINESS_CATEGORY_LABELS } from '../../lib/businessTaxonomy';
 
 const PILLAR_UPSELL = {
   grow: { emoji: '\u{1F680}', name: 'GROW', price: '14,999', tagline: 'Visibility, reviews, SEO, social & content — all managed for you.' },
   manage: { emoji: '\u{2699}\u{FE0F}', name: 'MANAGE', price: '9,999', tagline: 'Patient CRM, appointments, queue, billing & WhatsApp.' },
   connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', price: '4,999', tagline: 'A verified network of trusted healthcare partners.' },
 };
-
-// Size/scale classification captured at registration -- informational only,
-// shown here on the dashboard as the closest thing to a business profile.
-const BUSINESS_CATEGORY_LABELS = { solo_doctor: 'Solo Doctor', clinic: 'Clinic', hospital: 'Hospital (All Category)' };
 
 function UpsellCard({ pillar }) {
   const info = PILLAR_UPSELL[pillar];
