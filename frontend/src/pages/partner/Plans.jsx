@@ -3,7 +3,8 @@ import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import PricingCards from '../../components/PricingCards';
 import AddonCard from '../../components/AddonCard';
-import { Card, Badge, Button, PageLoading, formatCurrency, formatDate } from '../../components/ui';
+import { Card, Badge, Button, PageLoading, formatCurrency, formatDate, formatDateTime } from '../../components/ui';
+import { upiPaymentQrDataUrl } from '../../lib/upiQr';
 
 // Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
 // 'connect' now displays as "Networking Marketing" everywhere in the UI.
@@ -11,7 +12,17 @@ const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Network
 
 function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
   const [copied, setCopied] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
   const price = cycle === 'yearly' ? plan.yearly_price : plan.monthly_price;
+
+  useEffect(() => {
+    let cancelled = false;
+    setQrDataUrl(null);
+    upiPaymentQrDataUrl({ upiId: payment.upi_id, amount: price, note: `ROSKYRO ${plan.name}` })
+      .then((url) => { if (!cancelled) setQrDataUrl(url); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [payment.upi_id, price, plan.name]);
 
   function copyUpi() {
     navigator.clipboard?.writeText(payment.upi_id).then(() => {
@@ -30,20 +41,64 @@ function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
         <p className="text-xs text-brand-700 font-semibold uppercase tracking-wide">{cycle === 'yearly' ? 'Annual Membership' : 'Monthly Subscription'}</p>
 
         <div className="mt-5 bg-gray-50 border border-gray-200 rounded-xl p-4">
-          <p className="text-xs text-gray-400">Pay via UPI</p>
-          <div className="flex items-center justify-between mt-1">
-            <p className="text-lg font-bold text-gray-900">{payment.upi_id}</p>
+          <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
+          <div className="flex justify-center mt-2">
+            {qrDataUrl ? (
+              <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
+            ) : (
+              <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
+            )}
+          </div>
+          <div className="flex items-center justify-between mt-4">
+            <div>
+              <p className="text-xs text-gray-400">or pay to this UPI ID</p>
+              <p className="text-lg font-bold text-gray-900">{payment.upi_id}</p>
+            </div>
             <Button size="sm" variant="secondary" onClick={copyUpi}>{copied ? 'Copied!' : 'Copy'}</Button>
           </div>
           <p className="text-sm text-gray-500 mt-3">{payment.payment_note}</p>
         </div>
 
-        <div className="mt-6 flex items-center gap-3">
+        <p className="text-xs text-gray-500 mt-4 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+          Payment karne ke baad "I've Paid" dabayein — ROSKYRO team payment verify karke aapka plan confirm karegi,
+          tabhi ye pillar active hoga.
+        </p>
+
+        <div className="mt-4 flex items-center gap-3">
           <Button variant="secondary" className="flex-1" onClick={onCancel} disabled={busy}>Cancel</Button>
-          <Button className="flex-1" onClick={onConfirm} disabled={busy}>{busy ? 'Activating…' : "I've Paid — Activate"}</Button>
+          <Button className="flex-1" onClick={onConfirm} disabled={busy}>{busy ? 'Submitting…' : "I've Paid — Submit for Confirmation"}</Button>
         </div>
       </Card>
     </div>
+  );
+}
+
+function PendingActivations({ subscriptions, onWithdraw, withdrawingCode }) {
+  const pending = subscriptions.filter((s) => s.status === 'pending_payment');
+  if (pending.length === 0) return null;
+
+  return (
+    <Card className="p-5 bg-amber-50 border-amber-200">
+      <p className="text-sm font-semibold text-gray-900">Awaiting ROSKYRO confirmation</p>
+      <p className="text-xs text-gray-500 mt-1">
+        Aapne payment submit kar diya hai — ROSKYRO team UPI payment verify karke jaldi confirm karegi, tab ye pillar(s) active honge.
+      </p>
+      <div className="mt-3 space-y-2">
+        {pending.map((s) => (
+          <div key={s.id} className="flex items-center justify-between bg-white border border-amber-100 rounded-lg px-3 py-2">
+            <div>
+              <p className="text-sm font-medium text-gray-900">{s.name}</p>
+              <p className="text-xs text-gray-400">
+                {formatCurrency(s.price_at_purchase ?? s.monthly_price)}/{s.billing_cycle === 'yearly' ? 'yr' : 'mo'} · submitted {formatDateTime(s.requested_at)}
+              </p>
+            </div>
+            <Button size="sm" variant="ghost" disabled={withdrawingCode === s.plan_code} onClick={() => onWithdraw(s.plan_code)}>
+              {withdrawingCode === s.plan_code ? '…' : 'Withdraw'}
+            </Button>
+          </div>
+        ))}
+      </div>
+    </Card>
   );
 }
 
@@ -107,19 +162,10 @@ export default function PartnerPlans() {
     }
   }
 
-  async function subscribeAddon(addon) {
-    setError('');
-    setAddonBusy(true);
-    try {
-      await api.post('/partner-plans/subscribe', { planCode: addon.code, billingCycle: 'monthly' });
-      await refreshPillars();
-      load();
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Could not add this add-on.');
-    } finally {
-      setAddonBusy(false);
-    }
-  }
+  // NOTE (round 23): activating the add-on is also a self-serve subscription
+  // claim -- the backend always creates a pending_payment row for it, exactly
+  // like a pillar -- so it goes through the same UPI QR CheckoutModal below
+  // via startCheckout(), instead of calling /partner-plans/subscribe directly.
 
   async function cancelAddon(addon) {
     setError('');
@@ -147,6 +193,7 @@ export default function PartnerPlans() {
 
   const reelsAddon = plans.find((p) => p.code === 'reels');
   const reelsSub = mine.subscriptions.find((s) => s.plan_code === 'reels' && s.status === 'active');
+  const reelsPending = mine.subscriptions.some((s) => s.plan_code === 'reels' && s.status === 'pending_payment');
 
   return (
     <div className="space-y-8">
@@ -179,12 +226,14 @@ export default function PartnerPlans() {
       <Card className="p-4 bg-gray-50 border-gray-200 flex items-center gap-3">
         <span className="text-lg">{'\u{1F4B3}'}</span>
         <p className="text-sm text-gray-600">
-          Subscriptions are activated via UPI payment — pick a plan below, you'll see the payment UPI ID
-          before anything is charged.
+          Subscriptions are activated via UPI payment — pick a plan below, scan the QR code (or pay to the UPI ID
+          shown) and submit. A pillar goes live once ROSKYRO's team confirms the payment.
         </p>
       </Card>
 
       {error && <p className="text-sm text-rose-600">{error}</p>}
+
+      <PendingActivations subscriptions={mine.subscriptions} onWithdraw={cancel} withdrawingCode={busyCode} />
 
       <PricingCards
         plans={plans}
@@ -200,9 +249,10 @@ export default function PartnerPlans() {
         <AddonCard
           addon={reelsAddon}
           isActive={!!reelsSub}
+          isPending={reelsPending}
           requiredPillarActive={mine.activePillars.includes(reelsAddon.requires_pillar)}
-          busy={addonBusy}
-          onSubscribe={() => subscribeAddon(reelsAddon)}
+          busy={addonBusy || busyCode === reelsAddon.code}
+          onSubscribe={() => startCheckout(reelsAddon, 'monthly')}
           onCancel={() => cancelAddon(reelsAddon)}
         />
       )}
@@ -221,14 +271,17 @@ export default function PartnerPlans() {
                   <p className="font-medium text-gray-900">{s.name}</p>
                   <p className="text-xs text-gray-400">
                     {formatCurrency(s.price_at_purchase ?? s.monthly_price)}/{s.billing_cycle === 'yearly' ? 'yr' : 'mo'}
-                    {' '}({s.billing_cycle === 'yearly' ? 'Annual Membership' : 'Monthly Subscription'}) · started {formatDate(s.started_at)}
+                    {' '}({s.billing_cycle === 'yearly' ? 'Annual Membership' : 'Monthly Subscription'})
+                    {' '}· {s.started_at ? `started ${formatDate(s.started_at)}` : `submitted ${formatDate(s.requested_at)}`}
                     {s.cancelled_at ? ` · cancelled ${formatDate(s.cancelled_at)}` : ''}
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <Badge tone={s.status}>{s.status}</Badge>
-                  {s.status === 'active' && (
-                    <Button size="sm" variant="ghost" disabled={busyCode === s.plan_code} onClick={() => cancel(s.plan_code)}>Cancel</Button>
+                  {(s.status === 'active' || s.status === 'pending_payment') && (
+                    <Button size="sm" variant="ghost" disabled={busyCode === s.plan_code} onClick={() => cancel(s.plan_code)}>
+                      {s.status === 'pending_payment' ? 'Withdraw' : 'Cancel'}
+                    </Button>
                   )}
                 </div>
               </div>
