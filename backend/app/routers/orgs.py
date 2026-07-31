@@ -237,6 +237,45 @@ async def delete_org(org_id: str, body: dict, current_user: dict = Depends(get_c
     return {"deleted": True, "orgId": org_id, "counts": counts}
 
 
+# Round 25: "growth hub me esa link section add karde jisse business apne
+# sare platform ... kuch ek hi jagah se dekh ske ki kya progress hai" -- a
+# business's Growth Hub now shows quick links out to its own Google Business
+# Profile, social accounts, website etc. ROSKYRO's internal team manages
+# these accounts on the business's behalf (per the user's explicit choice),
+# so only internal staff can set them -- NOT the org owner via the generic
+# PATCH /{org_id} above, which is deliberately left untouched (owner-editable
+# fields stay owner-editable; this is not one of them).
+MAX_PLATFORM_LINKS = 20
+
+
+@router.put("/{org_id}/platform-links", dependencies=[Depends(require_internal)])
+async def set_platform_links(org_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    org = await organizations.find_one({"_id": org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    raw_links = body.get("links")
+    if not isinstance(raw_links, list):
+        raise HTTPException(status_code=400, detail="'links' must be a list.")
+    if len(raw_links) > MAX_PLATFORM_LINKS:
+        raise HTTPException(status_code=400, detail=f"No more than {MAX_PLATFORM_LINKS} links are allowed.")
+
+    links = []
+    for raw in raw_links:
+        label = (raw.get("label") or "").strip() if isinstance(raw, dict) else ""
+        url = (raw.get("url") or "").strip() if isinstance(raw, dict) else ""
+        if not label or not url:
+            raise HTTPException(status_code=400, detail="Each link needs both a label and a URL.")
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise HTTPException(status_code=400, detail=f"'{url}' is not a valid link -- it must start with http:// or https://.")
+        links.append({"id": raw.get("id") or new_id(), "label": label, "url": url})
+
+    await organizations.update_one({"_id": org_id}, {"$set": {"platform_links": links, "updated_at": now()}})
+    await log_audit(current_user["id"], "organization.platform_links_updated", "organization", org_id, {"count": len(links)})
+    updated = await organizations.find_one({"_id": org_id})
+    return {"organization": to_out(updated)}
+
+
 @router.get("/{org_id}/team")
 async def get_team(org_id: str, current_user: dict = Depends(get_current_user)):
     # Fixed IDOR: same missing-partner-check pattern as GET /{org_id}

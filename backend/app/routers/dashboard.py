@@ -3,7 +3,7 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.db import (
-    appointments, tasks, approvals, reviews, visibility_score_history,
+    appointments, tasks, approvals, visibility_score_history,
     marketing_performance, reports, referrals, queue_entries, patient_followups,
     invoices, partners, statements, organizations, settlements, users,
 )
@@ -73,33 +73,31 @@ async def customer_dashboard(current_user: dict = Depends(get_current_user)):
         "revenueThisMonth": revenue_month,
         "completedWorkThisMonth": completed_tasks_month,
         "pendingApprovals": to_out_many(pending_approvals),
-        "reviews": None,
         "visibilityScore": None,
         "marketingPerformance": [],
         "latestMonthlyReport": None,
         "referralsSummary": None,
         "manageSnapshot": None,
+        "platformLinks": [],
     }
 
     if has_grow:
-        # Aggregate the average/count in Mongo instead of pulling every
-        # review document for this org over the wire just to average one
-        # field in Python -- a business with years of reviews would
-        # otherwise ship thousands of full documents on every single
-        # dashboard load just to compute two numbers.
-        # All four of these are independent, so they run concurrently.
-        review_agg, vis_list, mp, latest_report = await asyncio.gather(
-            reviews.aggregate([
-                {"$match": {"org_id": org_id}},
-                {"$group": {"_id": None, "avg_rating": {"$avg": "$rating"}, "total": {"$sum": 1}}},
-            ]).to_list(None),
+        # Round 25: the old "reviews" widget here (average rating + count
+        # pulled from the `reviews` collection) was removed -- that
+        # collection was only ever populated by seed.py's two hardcoded demo
+        # rows per org, with no live Google sync and no way for a real
+        # review to ever land in it, so it permanently showed fake numbers
+        # to real businesses. Replaced by `platformLinks` below (org.py's
+        # PUT /orgs/{org_id}/platform-links), which is real ROSKYRO-team-
+        # maintained data.
+        # These four are independent, so they run concurrently.
+        vis_list, mp, latest_report, org = await asyncio.gather(
             visibility_score_history.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None),
             marketing_performance.find({"org_id": org_id, "period_month": this_month}).to_list(None),
             reports.find({"org_id": org_id}).sort("period_month", -1).limit(1).to_list(None),
+            organizations.find_one({"_id": org_id}),
         )
-        avg_rating = round(review_agg[0]["avg_rating"] or 0, 2) if review_agg else 0
-        total_reviews = review_agg[0]["total"] if review_agg else 0
-        response["reviews"] = {"average": avg_rating, "total": total_reviews}
+        response["platformLinks"] = (org or {}).get("platform_links") or []
 
         response["visibilityScore"] = to_out_many(vis_list)[0] if vis_list else None
 
