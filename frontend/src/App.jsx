@@ -51,7 +51,6 @@ const PartnerDirectory = lazy(() => import('./pages/customer/PartnerDirectory'))
 const Partnerships = lazy(() => import('./pages/customer/Partnerships'));
 const BecomePartner = lazy(() => import('./pages/customer/BecomePartner'));
 const Appointments = lazy(() => import('./pages/customer/Appointments'));
-const Reviews = lazy(() => import('./pages/customer/Reviews'));
 const Approvals = lazy(() => import('./pages/customer/Approvals'));
 const Reports = lazy(() => import('./pages/customer/Reports'));
 const Team = lazy(() => import('./pages/customer/Team'));
@@ -122,7 +121,6 @@ export default function App() {
           <Route path="/app/partnerships" element={<ProtectedRoute allow={['customer']}><Partnerships /></ProtectedRoute>} />
           <Route path="/app/settlements" element={<ProtectedRoute allow={['customer']}><CustomerSettlements /></ProtectedRoute>} />
           <Route path="/app/appointments" element={<ProtectedRoute allow={['customer']}><Appointments /></ProtectedRoute>} />
-          <Route path="/app/reviews" element={<ProtectedRoute allow={['customer']}><Reviews /></ProtectedRoute>} />
           <Route path="/app/approvals" element={<ProtectedRoute allow={['customer']}><Approvals /></ProtectedRoute>} />
           <Route path="/app/reports" element={<ProtectedRoute allow={['customer']}><Reports /></ProtectedRoute>} />
           <Route path="/app/team" element={<ProtectedRoute allow={['customer']}><Team /></ProtectedRoute>} />
