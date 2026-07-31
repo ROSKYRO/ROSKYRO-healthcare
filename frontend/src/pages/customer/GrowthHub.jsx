@@ -96,9 +96,26 @@ export default function GrowthHub() {
 
       <div className="grid md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader title="Reviews" action={<Link to="/app/reviews"><Button size="sm" variant="secondary">Open</Button></Link>} />
+          <CardHeader title="Your Platforms" subtitle="Everything ROSKYRO manages for you, in one place" />
           <div className="px-5 pb-5">
-            <p className="text-2xl font-bold text-gray-900">{dash.reviews?.average || '—'} <span className="text-sm font-normal text-gray-400">/ 5 · {dash.reviews?.total || 0} reviews</span></p>
+            {!dash.platformLinks || dash.platformLinks.length === 0 ? (
+              <EmptyState title="Your ROSKYRO team will add these soon." subtitle="Google Business Profile, social media, website — one click away from here." />
+            ) : (
+              <div className="space-y-2">
+                {dash.platformLinks.map((l) => (
+                  <a
+                    key={l.id}
+                    href={l.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between text-sm rounded-lg border border-gray-200 px-3 py-2.5 hover:bg-gray-50 transition"
+                  >
+                    <span className="font-medium text-gray-700">{l.label}</span>
+                    <span className="text-brand-700 text-xs font-medium">Open ↗</span>
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         </Card>
         <Card>

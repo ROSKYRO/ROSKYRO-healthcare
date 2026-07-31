@@ -122,11 +122,26 @@ export default function CustomerDashboard() {
 
         {hasGrow ? (
           <Card>
-            <CardHeader title="Google Reviews" />
+            <CardHeader title="Your Platforms" action={<Link to="/app/growth"><Button size="sm" variant="secondary">Open</Button></Link>} />
             <div className="px-5 pb-5">
-              <p className="text-3xl font-bold text-gray-900">{data.reviews.average || '—'} <span className="text-base font-normal text-gray-400">/ 5</span></p>
-              <p className="text-sm text-gray-500 mt-1">{data.reviews.total} total reviews</p>
-              <Link to="/app/reviews" className="text-sm text-brand-700 font-medium mt-3 inline-block">View all reviews →</Link>
+              {!data.platformLinks || data.platformLinks.length === 0 ? (
+                <EmptyState title="Your ROSKYRO team will add these soon." />
+              ) : (
+                <div className="space-y-2">
+                  {data.platformLinks.slice(0, 3).map((l) => (
+                    <a
+                      key={l.id}
+                      href={l.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between text-sm rounded-lg border border-gray-200 px-3 py-2 hover:bg-gray-50 transition"
+                    >
+                      <span className="font-medium text-gray-700">{l.label}</span>
+                      <span className="text-brand-700 text-xs font-medium">Open ↗</span>
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
           </Card>
         ) : <UpsellCard pillar="grow" />}
