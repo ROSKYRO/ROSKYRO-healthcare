@@ -4,7 +4,7 @@ import { Card, Button, Badge, formatCurrency } from './ui';
 // only purchasable while GROW is active) -- shared between the in-app
 // business Plans page and the in-app partner Plans page, since both sides
 // sell the exact same add-on shape against their own subscribe/cancel API.
-export default function AddonCard({ addon, isActive, requiredPillarActive, onSubscribe, onCancel, busy }) {
+export default function AddonCard({ addon, isActive, isPending, requiredPillarActive, onSubscribe, onCancel, busy }) {
   return (
     <Card className="p-5 border-dashed border-2 border-gray-200">
       <div className="flex items-center justify-between flex-wrap gap-2">
@@ -14,6 +14,7 @@ export default function AddonCard({ addon, isActive, requiredPillarActive, onSub
           <p className="text-sm text-gray-500 mt-0.5">{addon.tagline}</p>
         </div>
         {isActive && <Badge tone="verified">Active</Badge>}
+        {!isActive && isPending && <Badge tone="pending_payment">Awaiting confirmation</Badge>}
       </div>
 
       <p className="text-2xl font-extrabold text-gray-900 mt-3">
@@ -32,10 +33,15 @@ export default function AddonCard({ addon, isActive, requiredPillarActive, onSub
       <div className="mt-4">
         {isActive ? (
           <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}>Cancel Add-on</Button>
+        ) : isPending ? (
+          <p className="text-xs text-amber-700">
+            Payment submitted — ROSKYRO team confirm karne ke baad ye add-on active hoga. See "Awaiting ROSKYRO
+            confirmation" above to withdraw.
+          </p>
         ) : (
           <>
             <Button size="sm" disabled={busy || !requiredPillarActive} onClick={onSubscribe}>
-              {busy ? 'Adding…' : `Add for ${formatCurrency(addon.monthly_price)}/mo`}
+              {busy ? 'Opening…' : `Add for ${formatCurrency(addon.monthly_price)}/mo`}
             </Button>
             {!requiredPillarActive && (
               <p className="text-xs text-amber-700 mt-2">

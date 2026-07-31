@@ -57,6 +57,13 @@ const NAV = {
     { to: '/team/settlements', label: 'Settlements', icon: '\u{1F4B0}' },
     { to: '/team/marketing-payouts', label: 'Marketing Fee Payouts', icon: '\u{1F4E4}' },
     { to: '/team/subscription-renewals', label: 'Subscription Renewals', icon: '\u{1F501}' },
+    // Super-admin only — round 23: a brand-new self-serve subscription (its
+    // very FIRST billing period) no longer activates the moment a business/
+    // partner claims "I've paid" via UPI -- it sits here as a pending
+    // request until an admin confirms the payment actually came through.
+    // See routers/plans.py's confirm_payment()/reject_payment() and their
+    // routers/partner_plans.py mirrors.
+    { to: '/team/payment-confirmations', label: 'Payment Confirmations', icon: '\u{2705}', roles: ['roskyro_admin'] },
     // Shared across every business/computer -- see routers/whatsapp.py's
     // /queue endpoints and app/utils/whatsapp_sender.py for why this is
     // centralized here instead of each business sending its own.
