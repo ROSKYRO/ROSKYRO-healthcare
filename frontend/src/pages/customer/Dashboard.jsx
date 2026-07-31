@@ -5,20 +5,34 @@ import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, StatTile, Badge, PageLoading, EmptyState, Button, formatCurrency } from '../../components/ui';
 import { BUSINESS_CATEGORY_LABELS } from '../../lib/businessTaxonomy';
 
+// Fixed: price used to be a hardcoded literal per pillar ('14,999' /
+// '9,999' / '4,999') baked straight into the bundle -- so the moment a
+// super admin repriced a plan via internal/PricingManagement.jsx (which
+// writes PATCH /plans/{code}), this Dashboard kept showing the OLD number
+// forever, with no way to fix it short of a frontend redeploy. Same fix as
+// Landing.jsx: static copy (emoji, name, tagline) stays here since that's
+// genuinely content, not billing data; price now always comes live from
+// GET /plans, matched by `code` -- there is exactly one place a plan's
+// price can be set (Pricing Management), and every surface that shows a
+// price reads from it live.
 const PILLAR_UPSELL = {
-  grow: { emoji: '\u{1F680}', name: 'GROW', price: '14,999', tagline: 'Visibility, reviews, SEO, social & content — all managed for you.' },
-  manage: { emoji: '\u{2699}\u{FE0F}', name: 'MANAGE', price: '9,999', tagline: 'Patient CRM, appointments, queue, billing & WhatsApp.' },
-  connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', price: '4,999', tagline: 'A verified network of trusted healthcare partners.' },
+  grow: { emoji: '\u{1F680}', name: 'GROW', tagline: 'Visibility, reviews, SEO, social & content — all managed for you.' },
+  manage: { emoji: '\u{2699}\u{FE0F}', name: 'MANAGE', tagline: 'Patient CRM, appointments, queue, billing & WhatsApp.' },
+  connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', tagline: 'A verified network of trusted healthcare partners.' },
 };
 
-function UpsellCard({ pillar }) {
+function UpsellCard({ pillar, price }) {
   const info = PILLAR_UPSELL[pillar];
   return (
     <Card className="p-5 border-dashed border-2 border-gray-200 bg-gray-50/50">
       <p className="text-2xl">{info.emoji}</p>
       <p className="font-semibold text-gray-900 mt-1">Activate {info.name}</p>
       <p className="text-sm text-gray-500 mt-1">{info.tagline}</p>
-      <p className="text-sm font-semibold text-gray-700 mt-2">₹{info.price}/month <span className="font-normal text-gray-400">· Monthly Subscription</span></p>
+      <p className="text-sm font-semibold text-gray-700 mt-2">
+        {price != null
+          ? <>₹{Number(price).toLocaleString('en-IN')}/month <span className="font-normal text-gray-400">· Monthly Subscription</span></>
+          : <Link to="/app/plans" className="text-brand-700 font-medium">See pricing →</Link>}
+      </p>
       <Link to="/app/plans"><Button size="sm" className="mt-3">Activate {info.name}</Button></Link>
     </Card>
   );
@@ -28,6 +42,7 @@ export default function CustomerDashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [priceByCode, setPriceByCode] = useState({});
 
   const load = () => {
     setError('');
@@ -41,6 +56,17 @@ export default function CustomerDashboard() {
   };
 
   useEffect(load, []);
+
+  useEffect(() => {
+    // Best-effort only -- same as Landing.jsx: if this fails, the upsell
+    // cards below just fall back to "See pricing →" instead of showing a
+    // stale/fake number.
+    api.get('/plans').then((res) => {
+      const map = {};
+      for (const p of res.data.plans || []) map[p.code] = p.monthly_price;
+      setPriceByCode(map);
+    }).catch(() => {});
+  }, []);
 
   if (error) {
     return (
@@ -144,7 +170,7 @@ export default function CustomerDashboard() {
               )}
             </div>
           </Card>
-        ) : <UpsellCard pillar="grow" />}
+        ) : <UpsellCard pillar="grow" price={priceByCode.grow} />}
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
@@ -185,7 +211,7 @@ export default function CustomerDashboard() {
               )}
             </div>
           </Card>
-        ) : <UpsellCard pillar="connect" />}
+        ) : <UpsellCard pillar="connect" price={priceByCode.connect} />}
       </div>
 
       {hasManage && data.manageSnapshot && (
@@ -210,7 +236,7 @@ export default function CustomerDashboard() {
           </div>
         </Card>
       )}
-      {!hasManage && <UpsellCard pillar="manage" />}
+      {!hasManage && <UpsellCard pillar="manage" price={priceByCode.manage} />}
 
       {hasGrow && (
         <div className="grid md:grid-cols-2 gap-6">
