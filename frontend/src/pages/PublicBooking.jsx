@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../lib/api';
 import { Card, Button, Input, Textarea, Spinner, formatCurrency } from '../components/ui';
+import { upiPaymentQrDataUrl } from '../lib/upiQr';
 
 function fmtDateLabel(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -24,6 +25,7 @@ export default function PublicBooking() {
   const [form, setForm] = useState({ patientName: '', patientPhone: '', note: '' });
   const [result, setResult] = useState(null);
   const [confirming, setConfirming] = useState(false); // true only while the actual booking API call is in flight
+  const [qrDataUrl, setQrDataUrl] = useState(null);
 
   function loadPage() {
     setState('loading');
@@ -45,6 +47,22 @@ export default function PublicBooking() {
   }
 
   useEffect(loadPage, [orgId]);
+
+  // Round 23 follow-up: the patient-facing payment step used to show only
+  // the clinic's UPI ID as text -- scanning was not possible, patients had
+  // to type the UPI ID into their own UPI app by hand. Now a scan-to-pay QR
+  // renders alongside it too, same upiQr.js helper the plan-subscription
+  // checkout modal uses (see Plans.jsx).
+  useEffect(() => {
+    if (state !== 'payment' || !selectedDoctor || !page?.settings?.upiId) return;
+    let cancelled = false;
+    const fee = Number(selectedDoctor.consultationFee) || 0;
+    setQrDataUrl(null);
+    upiPaymentQrDataUrl({ upiId: page.settings.upiId, amount: fee, note: `ROSKYRO Booking ${selectedDoctor.name}` })
+      .then((url) => { if (!cancelled) setQrDataUrl(url); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [state, selectedDoctor, page?.settings?.upiId]);
 
   function chooseDoctor(doctor) {
     setSelectedDoctor(doctor);
@@ -156,7 +174,16 @@ export default function PublicBooking() {
             {fmtDateLabel(selectedDate)} · {selectedTime}
           </p>
 
-          {result.payment?.collected ? (
+          {result.payment?.collected && result.payment?.pending ? (
+            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
+              <p className="text-sm font-semibold text-amber-800">Payment submitted — {formatCurrency(result.payment.amount)}</p>
+              <p className="text-xs text-amber-700 mt-1">Aapne UPI se pay kiya: <span className="font-mono font-bold text-gray-900">{result.payment.upiId}</span></p>
+              <p className="text-xs text-amber-700 mt-2">
+                Clinic aapki payment UPI par verify karke confirm karegi — reception par apna naam aur token
+                number (#{result.tokenNumber}) zaroor bata dein.
+              </p>
+            </div>
+          ) : result.payment?.collected ? (
             <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-left">
               <p className="text-sm font-semibold text-emerald-800">Payment received — {formatCurrency(result.payment.amount)}</p>
               <p className="text-xs text-emerald-700 mt-1">Paid via UPI to: <span className="font-mono font-bold text-gray-900">{result.payment.upiId}</span></p>
@@ -230,11 +257,20 @@ export default function PublicBooking() {
           <p className="text-3xl font-extrabold text-brand-700 mt-3">{formatCurrency(fee)}</p>
           <p className="text-xs text-gray-400 mt-1">{fmtDateLabel(selectedDate)} · {selectedTime}</p>
 
-          <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4 text-left">
-            <p className="text-xs text-gray-500">Pay via UPI to:</p>
-            <p className="text-base font-mono font-bold text-gray-900 mt-1 break-all">{page?.settings?.upiId}</p>
-            <p className="text-xs text-gray-500 mt-3">
-              Booking sirf tabhi confirm hogi aur token sirf tabhi milega jab payment ho chuki ho — pehle UPI se pay karein, phir neeche confirm karein.
+          <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
+            <div className="flex justify-center mt-2">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
+              ) : (
+                <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
+              )}
+            </div>
+            <p className="text-xs text-gray-500 text-left mt-3">Or pay via UPI to:</p>
+            <p className="text-base font-mono font-bold text-gray-900 mt-1 break-all text-left">{page?.settings?.upiId}</p>
+            <p className="text-xs text-gray-500 mt-3 text-left">
+              Pehle UPI se pay karein, phir neeche confirm karein — token mil jayega, lekin clinic aapki payment
+              verify karke confirm karegi tabhi booking final hogi.
             </p>
           </div>
 
