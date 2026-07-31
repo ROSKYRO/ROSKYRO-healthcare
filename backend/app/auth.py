@@ -68,6 +68,19 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
 
     org, active_pillars = await asyncio.gather(_load_org(), _load_pillars())
 
+    # Round 24: ROSKYRO's super admin can deactivate a business/partner
+    # account (see routers/orgs.py's POST /{org_id}/deactivate) -- every
+    # user at that org gets locked out immediately, the same way a
+    # deactivated team member already gets locked out via the `status`
+    # check above. Deliberately a separate `is_suspended` flag rather than
+    # the org's existing `status` field: every org is created with
+    # status "onboarding" and nothing else in this codebase ever flips it
+    # to "active" (see register() in this same flow), so gating on
+    # `status != "active"` would lock out every existing business/partner
+    # that has ever signed up.
+    if org and org.get("is_suspended"):
+        raise HTTPException(status_code=403, detail="This organization's account has been deactivated. Contact ROSKYRO support.")
+
     return {
         "id": user["_id"],
         "org_id": user.get("org_id"),
