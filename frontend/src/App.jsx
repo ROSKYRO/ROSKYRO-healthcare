@@ -80,6 +80,7 @@ const PartnerVerification = lazy(() => import('./pages/internal/PartnerVerificat
 const InternalSettlements = lazy(() => import('./pages/internal/Settlements'));
 const MarketingPayouts = lazy(() => import('./pages/internal/MarketingPayouts'));
 const SubscriptionRenewals = lazy(() => import('./pages/internal/SubscriptionRenewals'));
+const PaymentConfirmations = lazy(() => import('./pages/internal/PaymentConfirmations'));
 const AdminWallet = lazy(() => import('./pages/internal/AdminWallet'));
 const Roster = lazy(() => import('./pages/internal/Roster'));
 const ManageTeam = lazy(() => import('./pages/internal/ManageTeam'));
@@ -153,6 +154,7 @@ export default function App() {
           <Route path="/team/settlements" element={<ProtectedRoute allow={['internal']}><InternalSettlements /></ProtectedRoute>} />
           <Route path="/team/marketing-payouts" element={<ProtectedRoute allow={['internal']}><MarketingPayouts /></ProtectedRoute>} />
           <Route path="/team/subscription-renewals" element={<ProtectedRoute allow={['internal']}><SubscriptionRenewals /></ProtectedRoute>} />
+          <Route path="/team/payment-confirmations" element={<ProtectedRoute allow={['internal']}><PaymentConfirmations /></ProtectedRoute>} />
           <Route path="/team/whatsapp-queue" element={<ProtectedRoute allow={['internal']}><WhatsappQueue /></ProtectedRoute>} />
           <Route path="/team/wallet" element={<ProtectedRoute allow={['internal']}><AdminWallet /></ProtectedRoute>} />
           <Route path="/team/roster" element={<ProtectedRoute allow={['internal']}><Roster /></ProtectedRoute>} />
