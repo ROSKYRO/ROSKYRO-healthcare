@@ -55,9 +55,14 @@ def _first_partner_id(client, headers):
     return partners[0]["id"]
 
 
-def _activate_connect(client, headers):
+def _activate_connect(client, headers, admin_headers):
+    # Round 23: subscribe() only creates a pending claim now -- confirm it
+    # via the admin payment-confirmation endpoint so CONNECT is genuinely
+    # active (these tests need require_plan("connect") to actually pass).
     resp = client.post("/api/plans/subscribe", json={"planCode": "connect"}, headers=headers)
     assert resp.status_code == 201, resp.text
+    confirm = client.post(f"/api/plans/{resp.json()['subscription']['id']}/confirm-payment", headers=admin_headers)
+    assert confirm.status_code == 200, confirm.text
 
 
 def test_new_taxonomy_type_and_category_pair_round_trips(client, unique_suffix):
@@ -121,14 +126,14 @@ def test_unknown_business_category_is_still_rejected(client, unique_suffix):
     assert "category" in resp.json()["error"].lower()
 
 
-def test_eye_care_center_type_gains_referral_creation_right(client, unique_suffix):
+def test_eye_care_center_type_gains_referral_creation_right(client, unique_suffix, admin_headers):
     """New standalone type added in round 22 -- the direct successor to the
     old "eye_hospital" business_type, so it must be able to create referrals
     just like that old type could."""
     reg = _register(client, unique_suffix, businessType="eye_care_center", businessCategory="eye_care_center")
     assert reg.status_code == 201, reg.text
     headers = _headers(reg.json())
-    _activate_connect(client, headers)
+    _activate_connect(client, headers, admin_headers)
     partner_id = _first_partner_id(client, headers)
 
     resp = client.post("/api/referrals", headers=headers, json={
@@ -139,14 +144,14 @@ def test_eye_care_center_type_gains_referral_creation_right(client, unique_suffi
     assert resp.status_code == 201, resp.text
 
 
-def test_new_unrelated_business_type_does_not_gain_referral_creation_right(client, unique_suffix):
+def test_new_unrelated_business_type_does_not_gain_referral_creation_right(client, unique_suffix, admin_headers):
     """dental_center is a brand-new round-22 top-level type with no old-
     taxonomy equivalent that had referral rights -- it must NOT silently
     gain a right the old "dental" business_type never had."""
     reg = _register(client, unique_suffix, businessType="dental_center", businessCategory="dental_center")
     assert reg.status_code == 201, reg.text
     headers = _headers(reg.json())
-    _activate_connect(client, headers)
+    _activate_connect(client, headers, admin_headers)
     partner_id = _first_partner_id(client, headers)
 
     resp = client.post("/api/referrals", headers=headers, json={
@@ -157,14 +162,14 @@ def test_new_unrelated_business_type_does_not_gain_referral_creation_right(clien
     assert resp.status_code == 403, resp.text
 
 
-def test_hospital_and_clinic_types_keep_referral_creation_right(client, unique_suffix):
+def test_hospital_and_clinic_types_keep_referral_creation_right(client, unique_suffix, admin_headers):
     """The two business_type slugs that carry over unchanged from the old
     taxonomy (clinic, hospital) must keep working exactly as before."""
     for business_type in ("clinic", "hospital"):
         reg = _register(client, unique_suffix, businessType=business_type, businessCategory=business_type if business_type == "clinic" else "general_hospital")
         assert reg.status_code == 201, reg.text
         headers = _headers(reg.json())
-        _activate_connect(client, headers)
+        _activate_connect(client, headers, admin_headers)
         partner_id = _first_partner_id(client, headers)
 
         resp = client.post("/api/referrals", headers=headers, json={

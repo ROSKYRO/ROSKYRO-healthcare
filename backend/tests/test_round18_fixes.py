@@ -223,14 +223,17 @@ def test_appointment_status_is_whitelisted_and_revenue_must_be_finite(client):
 # SUBSCRIPTIONS
 # ---------------------------------------------------------------------------
 
-def test_bundle_cannot_be_subscribed_twice(client, unique_suffix):
+def test_bundle_cannot_be_subscribed_twice(client, unique_suffix, admin_headers):
     """Found live and reproduced: the "complete" bundle had NO
     already-subscribed guard, so a business could end up holding a monthly
     AND a yearly "complete" simultaneously -- monthlyTotal 44998.17 for one
     business, billed forever, with no UI showing anything wrong.
 
     The plan, its price and what it unlocks are all unchanged; only the
-    second, duplicate purchase is refused."""
+    second, duplicate purchase is refused. (Round 23: subscribe() now only
+    creates a pending claim -- confirmed here via the admin payment-
+    confirmation endpoint so "active_complete" below is genuinely active,
+    exercising the duplicate guard's "already active" branch specifically.)"""
     reg = client.post("/api/auth/register", json={
         "orgName": f"Bundle Guard Clinic {unique_suffix}",
         "businessType": "clinic", "city": "Pune", "ownerName": "Dr Bundle",
@@ -243,6 +246,8 @@ def test_bundle_cannot_be_subscribed_twice(client, unique_suffix):
 
     first = client.post("/api/plans/subscribe", headers=headers, json={"planCode": "complete", "billingCycle": "monthly"})
     assert first.status_code in (200, 201), first.text
+    confirm = client.post(f"/api/plans/{first.json()['subscription']['id']}/confirm-payment", headers=admin_headers)
+    assert confirm.status_code == 200, confirm.text
 
     # Same cycle AND a different cycle must both be refused -- the original
     # bug was specifically that a different billingCycle slipped past.
@@ -261,10 +266,12 @@ def test_bundle_cannot_be_subscribed_twice(client, unique_suffix):
     assert set(mine.json()["activePillars"]) == {"grow", "manage", "connect"}
 
 
-def test_a_pillar_already_covered_by_the_bundle_is_still_refused(client, unique_suffix):
+def test_a_pillar_already_covered_by_the_bundle_is_still_refused(client, unique_suffix, admin_headers):
     """Unchanged behaviour, re-asserted because round 18 rewrote the $nin
     filter this check is built on (it hardcoded "complete" instead of using
-    the plan code actually being purchased)."""
+    the plan code actually being purchased). Round 23: the bundle claim is
+    confirmed active first -- find_active_bundle_covering_pillar only
+    matches a genuinely active bundle, not a still-pending one."""
     reg = client.post("/api/auth/register", json={
         "orgName": f"Bundle Pillar Clinic {unique_suffix}",
         "businessType": "clinic", "city": "Pune", "ownerName": "Dr Pillar",
@@ -274,7 +281,10 @@ def test_a_pillar_already_covered_by_the_bundle_is_still_refused(client, unique_
     })
     assert reg.status_code == 201, reg.text
     headers = {"Authorization": f"Bearer {reg.json()['token']}"}
-    client.post("/api/plans/subscribe", headers=headers, json={"planCode": "complete", "billingCycle": "monthly"})
+    bundle = client.post("/api/plans/subscribe", headers=headers, json={"planCode": "complete", "billingCycle": "monthly"})
+    assert bundle.status_code == 201, bundle.text
+    confirm = client.post(f"/api/plans/{bundle.json()['subscription']['id']}/confirm-payment", headers=admin_headers)
+    assert confirm.status_code == 200, confirm.text
 
     dupe = client.post("/api/plans/subscribe", headers=headers, json={"planCode": "grow", "billingCycle": "monthly"})
     assert dupe.status_code == 409, dupe.text

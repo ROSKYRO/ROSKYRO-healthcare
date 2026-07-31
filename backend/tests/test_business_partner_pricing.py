@@ -37,6 +37,25 @@ def _login_admin(client):
     return {"Authorization": f"Bearer {resp.json()['token']}"}
 
 
+def _subscribe_and_confirm(client, headers, admin_headers, plan_code, endpoint="/api/plans"):
+    """Round 23: self-serve subscribe() no longer activates instantly -- it
+    only creates a "pending_payment" claim, which stays locked out of
+    activePillars until a roskyro_admin confirms it via /{id}/confirm-payment
+    (see routers/plans.py's subscribe()/confirm_payment()). Tests in this
+    file care about the PILLAR actually being active (bundle-bonus removal,
+    reels add-on gating, etc.), not the payment-confirmation flow itself
+    (that's covered by test_round23_payment_confirmation.py) -- so this
+    helper does both steps and returns the subscribe response, exactly the
+    shape every existing assertion here already expects."""
+    resp = client.post(f"{endpoint}/subscribe", json={"planCode": plan_code}, headers=headers)
+    if resp.status_code != 201:
+        return resp
+    sub_id = resp.json()["subscription"]["id"]
+    confirm = client.post(f"{endpoint}/{sub_id}/confirm-payment", headers=admin_headers)
+    assert confirm.status_code == 200, confirm.text
+    return resp
+
+
 def _register_business(client, unique_suffix, business_category=None):
     n = next(_reg_counter)
     body = {
@@ -79,18 +98,18 @@ def test_business_category_defaults_and_rejects_unknown_value(client, unique_suf
     assert resp.status_code == 400, resp.text
 
 
-def test_business_manage_and_grow_no_longer_unlock_connect_free(client, unique_suffix):
+def test_business_manage_and_grow_no_longer_unlock_connect_free(client, unique_suffix, admin_headers):
     """Retired-feature regression test: activating both trigger pillars must
     NOT auto-grant connect anymore, and the response must not carry the old
     bonusGranted/bonusRevoked keys at all."""
     reg = _register_business(client, unique_suffix)
     headers = _headers(reg)
 
-    client.post("/api/plans/subscribe", json={"planCode": "manage"}, headers=headers)
+    _subscribe_and_confirm(client, headers, admin_headers, "manage")
     mine = client.get("/api/plans/mine", headers=headers).json()
     assert "connect" not in mine["activePillars"]
 
-    sub_resp = client.post("/api/plans/subscribe", json={"planCode": "grow"}, headers=headers)
+    sub_resp = _subscribe_and_confirm(client, headers, admin_headers, "grow")
     assert sub_resp.status_code == 201, sub_resp.text
     assert "bonusGranted" not in sub_resp.json()
 
@@ -108,15 +127,15 @@ def test_business_manage_and_grow_no_longer_unlock_connect_free(client, unique_s
     assert "connect" not in mine["activePillars"]
 
 
-def test_reels_addon_requires_grow_and_cascades_on_cancel(client, unique_suffix):
+def test_reels_addon_requires_grow_and_cascades_on_cancel(client, unique_suffix, admin_headers):
     reg = _register_business(client, unique_suffix)
     headers = _headers(reg)
 
     blocked = client.post("/api/plans/subscribe", json={"planCode": "reels"}, headers=headers)
     assert blocked.status_code == 400, blocked.text
 
-    client.post("/api/plans/subscribe", json={"planCode": "grow"}, headers=headers)
-    ok = client.post("/api/plans/subscribe", json={"planCode": "reels"}, headers=headers)
+    _subscribe_and_confirm(client, headers, admin_headers, "grow")
+    ok = _subscribe_and_confirm(client, headers, admin_headers, "reels")
     assert ok.status_code == 201, ok.text
 
     mine = client.get("/api/plans/mine", headers=headers).json()
@@ -198,7 +217,7 @@ def test_partner_plan_price_can_no_longer_be_edited_independently(client):
     assert after_price == before_price
 
 
-def test_partner_manage_and_grow_no_longer_unlock_connect_free(client):
+def test_partner_manage_and_grow_no_longer_unlock_connect_free(client, admin_headers):
     """Retired-feature regression test (partner side, mirror of the
     business-side one above): activating GROW + CONNECT together must NOT
     auto-grant MANAGE for free anymore."""
@@ -208,7 +227,7 @@ def test_partner_manage_and_grow_no_longer_unlock_connect_free(client):
     mine = client.get("/api/partner-plans/mine", headers=headers).json()
     assert mine["activePillars"] == ["grow"]  # seeded with only GROW active
 
-    sub_resp = client.post("/api/partner-plans/subscribe", json={"planCode": "connect"}, headers=headers)
+    sub_resp = _subscribe_and_confirm(client, headers, admin_headers, "connect", endpoint="/api/partner-plans")
     assert sub_resp.status_code == 201, sub_resp.text
     assert "bonusGranted" not in sub_resp.json()
 
