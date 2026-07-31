@@ -236,11 +236,19 @@ async def my_partner_subscriptions(current_user: dict = Depends(get_current_user
 
 @router.post("/subscribe", status_code=201)
 async def subscribe_partner(body: dict, current_user: dict = Depends(get_current_user)):
-    """Self-serve activate a partner-priced plan for your own partner org
-    (simulates checkout/payment -- no real billing gateway in v1)."""
+    """Claim a partner-priced plan for your own partner org via self-serve
+    UPI payment.
+
+    Round 23: no longer activates instantly (mirrors routers/plans.py's
+    business-side subscribe() -- see that function's docstring for the full
+    reasoning). Created with status "pending_payment"; the pillar stays
+    LOCKED (get_active_partner_pillars only ever counts status=="active"
+    rows) until a roskyro_admin reviews the UPI payment and calls
+    POST /{id}/confirm-payment."""
     _require_partner(current_user)
     plan_code = body.get("planCode")
     billing_cycle = "yearly" if body.get("billingCycle") == "yearly" else "monthly"
+    payment_reference = (body.get("paymentReference") or "").strip() or None
     org_id = current_user["orgId"]
 
     if not plan_code:
@@ -264,12 +272,15 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
         # branch had no duplicate guard at all (only the individual-pillar
         # branch below did), so re-subscribing to the bundle -- switching
         # monthly to yearly, or just a double-clicked "Activate" -- left BOTH
-        # rows active and raised two renewal invoices every period.
+        # rows active and raised two renewal invoices every period. Round 23:
+        # also blocks a second claim while an earlier one is still pending.
         existing_bundle = await partner_subscriptions.find_one(
-            {"org_id": org_id, "plan_code": plan_code, "status": "active"}
+            {"org_id": org_id, "plan_code": plan_code, "status": {"$in": ["active", "pending_payment"]}}
         )
         if existing_bundle:
-            raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
+            detail = (f"{plan['name']} is already active for this partner." if existing_bundle["status"] == "active"
+                      else f"A request to activate {plan['name']} is already awaiting ROSKYRO confirmation.")
+            raise HTTPException(status_code=409, detail=detail)
         # Catalog STRUCTURE (is_addon/is_bundle/bundle_pillars/requires_pillar)
         # is always read from the business collection now, not partner_plans
         # -- see this file's header comment -- since that's guaranteed to be
@@ -279,15 +290,19 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
         # than this plan's own code, so a future second bundle would have
         # silently cancelled an active "complete" row instead of surfacing
         # the 409 above.
-        addon_codes = [p["_id"] async for p in business_plans_collection.find({"is_addon": True})]
-        await partner_subscriptions.update_many(
-            {"org_id": org_id, "status": "active", "plan_code": {"$nin": [plan_code] + addon_codes}},
-            {"$set": {"status": "cancelled", "cancelled_at": now()}},
-        )
+        #
+        # Round 23: the actual cancel-superseded-plans sweep is deferred to
+        # confirm_partner_payment() below -- see routers/plans.py's
+        # confirm_payment() docstring for why (no coverage gap while a
+        # claim awaits confirmation).
     else:
-        existing = await partner_subscriptions.find_one({"org_id": org_id, "plan_code": plan_code, "status": "active"})
+        existing = await partner_subscriptions.find_one(
+            {"org_id": org_id, "plan_code": plan_code, "status": {"$in": ["active", "pending_payment"]}}
+        )
         if existing:
-            raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
+            detail = (f"{plan['name']} is already active for this partner." if existing["status"] == "active"
+                      else f"A request to activate {plan['name']} is already awaiting ROSKYRO confirmation.")
+            raise HTTPException(status_code=409, detail=detail)
         # Same double-billing fix as routers/plans.py's subscribe -- block
         # subscribing to an individual pillar already covered by an active
         # bundle, not just an exact-plan_code duplicate.
@@ -299,23 +314,93 @@ async def subscribe_partner(body: dict, current_user: dict = Depends(get_current
             )
 
     doc = {
-        "_id": new_id(), "org_id": org_id, "plan_code": plan_code, "status": "active",
+        "_id": new_id(), "org_id": org_id, "plan_code": plan_code, "status": "pending_payment",
         "source": "self_upgrade", "activated_by": current_user["id"], "billing_cycle": billing_cycle,
-        "price_at_purchase": price_at_purchase, "started_at": now(), "cancelled_at": None,
+        "price_at_purchase": price_at_purchase, "started_at": None,
+        "requested_at": now(), "payment_reference": payment_reference, "confirmed_by": None,
+        "cancelled_at": None,
     }
     await partner_subscriptions.insert_one(doc)
-    # Closes the check-then-insert race both guards above are subject to --
-    # see app/utils/subscriptions.py.
-    if not await enforce_single_active(partner_subscriptions, org_id, plan_code, doc["_id"]):
-        raise HTTPException(status_code=409, detail=f"{plan['name']} is already active for this partner.")
 
-    partner_admin = await users.find_one({"org_id": org_id, "role": "partner_admin"})
-    if partner_admin and partner_admin["_id"] != current_user["id"]:
-        amount_label = f"₹{price_at_purchase}/year" if billing_cycle == "yearly" else f"₹{price_at_purchase}/month"
-        await notify(partner_admin["_id"], "plan_activated", f"{plan['name']} is now active", amount_label, "plan", None)
-
-    await log_audit(current_user["id"], "partner_plan.subscribed", "organization", org_id, {"planCode": plan_code, "billingCycle": billing_cycle})
+    await log_audit(current_user["id"], "partner_plan.payment_submitted", "organization", org_id, {"planCode": plan_code, "billingCycle": billing_cycle})
     return {"subscription": to_out(doc)}
+
+
+@router.post("/{subscription_id}/confirm-payment", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def confirm_partner_payment(subscription_id: str, current_user: dict = Depends(get_current_user)):
+    """ROSKYRO super admin only: confirm a partner's self-serve UPI payment
+    claim was actually received -- mirrors routers/plans.py's
+    confirm_payment() for the business audience. See that function's
+    docstring for the full reasoning, including why a bundle's replaced-plan
+    cleanup happens here rather than at claim time."""
+    sub = await partner_subscriptions.find_one({"_id": subscription_id})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription request not found.")
+    if sub["status"] != "pending_payment":
+        raise HTTPException(status_code=400, detail=f"This request is already {sub['status']}, nothing to confirm.")
+
+    plan = (await _effective_partner_plans_map([sub["plan_code"]])).get(sub["plan_code"])
+    if plan and plan.get("is_addon") and plan.get("requires_pillar"):
+        active_now = await get_active_partner_pillars(sub["org_id"])
+        if plan["requires_pillar"] not in active_now:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{plan['requires_pillar'].upper()} is no longer active on this partner -- cannot confirm {plan.get('name', sub['plan_code'])} until it is.",
+            )
+
+    await partner_subscriptions.update_one({"_id": subscription_id}, {"$set": {
+        "status": "active", "started_at": now(), "confirmed_by": current_user["id"],
+    }})
+
+    if plan and plan.get("is_bundle"):
+        addon_codes = [p["_id"] async for p in business_plans_collection.find({"is_addon": True})]
+        await partner_subscriptions.update_many(
+            {"org_id": sub["org_id"], "status": "active", "plan_code": {"$nin": [sub["plan_code"]] + addon_codes}, "_id": {"$ne": subscription_id}},
+            {"$set": {"status": "cancelled", "cancelled_at": now()}},
+        )
+
+    if not await enforce_single_active(partner_subscriptions, sub["org_id"], sub["plan_code"], subscription_id):
+        raise HTTPException(status_code=409, detail="This plan was already confirmed active for this partner by another request.")
+
+    updated = await partner_subscriptions.find_one({"_id": subscription_id})
+    partner_admin = await users.find_one({"org_id": sub["org_id"], "role": "partner_admin"})
+    if partner_admin:
+        price = updated.get("price_at_purchase")
+        amount_label = f"₹{price}/year" if updated.get("billing_cycle") == "yearly" else f"₹{price}/month"
+        await notify(partner_admin["_id"], "plan_activated", f"{plan['name'] if plan else sub['plan_code']} is now active", amount_label, "plan", None)
+
+    await log_audit(current_user["id"], "partner_plan.payment_confirmed", "organization", sub["org_id"], {"planCode": sub["plan_code"], "subscriptionId": subscription_id})
+    return {"subscription": to_out(updated)}
+
+
+@router.post("/{subscription_id}/reject-payment", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def reject_partner_payment(subscription_id: str, body: dict | None = None, current_user: dict = Depends(get_current_user)):
+    """ROSKYRO super admin only -- mirrors routers/plans.py's
+    reject_payment() for the partner audience."""
+    sub = await partner_subscriptions.find_one({"_id": subscription_id})
+    if not sub:
+        raise HTTPException(status_code=404, detail="Subscription request not found.")
+    if sub["status"] != "pending_payment":
+        raise HTTPException(status_code=400, detail=f"This request is already {sub['status']}, nothing to reject.")
+
+    reason = ((body or {}).get("reason") or "").strip() or None
+    await partner_subscriptions.update_one({"_id": subscription_id}, {"$set": {
+        "status": "payment_rejected", "confirmed_by": current_user["id"], "rejected_at": now(), "rejection_reason": reason,
+    }})
+    updated = await partner_subscriptions.find_one({"_id": subscription_id})
+
+    plan = (await _effective_partner_plans_map([sub["plan_code"]])).get(sub["plan_code"])
+    partner_admin = await users.find_one({"org_id": sub["org_id"], "role": "partner_admin"})
+    if partner_admin:
+        await notify(
+            partner_admin["_id"], "plan_payment_rejected",
+            f"Payment not confirmed for {plan['name'] if plan else sub['plan_code']}",
+            reason or "ROSKYRO could not verify this payment -- please re-check and submit again from Plans & Billing.",
+            "plan", None,
+        )
+
+    await log_audit(current_user["id"], "partner_plan.payment_rejected", "organization", sub["org_id"], {"planCode": sub["plan_code"], "subscriptionId": subscription_id, "reason": reason})
+    return {"subscription": to_out(updated)}
 
 
 @router.post("/cancel")
@@ -326,6 +411,14 @@ async def cancel_partner(body: dict, current_user: dict = Depends(get_current_us
 
     existing = await partner_subscriptions.find_one({"org_id": org_id, "plan_code": plan_code, "status": "active"})
     if not existing:
+        # Round 23: a still-pending (unconfirmed) claim can also be
+        # withdrawn -- mirrors routers/plans.py's cancel().
+        pending = await partner_subscriptions.find_one({"org_id": org_id, "plan_code": plan_code, "status": "pending_payment"})
+        if pending:
+            await partner_subscriptions.update_one({"_id": pending["_id"]}, {"$set": {"status": "cancelled", "cancelled_at": now()}})
+            updated = await partner_subscriptions.find_one({"_id": pending["_id"]})
+            await log_audit(current_user["id"], "partner_plan.payment_withdrawn", "organization", org_id, {"planCode": plan_code})
+            return {"subscription": to_out(updated), "addonsCancelled": []}
         raise HTTPException(status_code=404, detail="No active subscription found for that plan.")
 
     await partner_subscriptions.update_one({"_id": existing["_id"]}, {"$set": {"status": "cancelled", "cancelled_at": now()}})
