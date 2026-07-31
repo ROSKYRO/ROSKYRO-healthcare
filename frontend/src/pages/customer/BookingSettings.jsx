@@ -395,7 +395,10 @@ export default function BookingSettings() {
       <DoctorsPanel />
 
       <Card>
-        <CardHeader title="QR Bookings" subtitle="Patients jo QR scan karke aaye — kis doctor ke paas, token number, payment status, sab yahan dikhega." />
+        <CardHeader
+          title="QR Bookings"
+          subtitle="Patients jo QR scan karke aaye — har fee-wali booking 'payment pending' se shuru hoti hai, jab tak aap apni UPI mein payment verify karke Confirm nahi karte tab tak wo confirmed nahi maani jaati."
+        />
         <Table
           rows={bookings}
           emptyMessage="Abhi tak koi QR booking nahi aayi."
@@ -410,7 +413,9 @@ export default function BookingSettings() {
             { key: 'status', header: 'Status', render: (r) => <Badge tone={r.status}>{r.status}</Badge> },
             {
               key: 'actions', header: '', render: (r) => r.payment_status === 'pending' && (
-                <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>Mark Paid</Button>
+                <Button size="sm" disabled={busyId === r.id} onClick={() => markPaid(r.id)}>
+                  {busyId === r.id ? '…' : 'Confirm Payment'}
+                </Button>
               ),
             },
           ]}

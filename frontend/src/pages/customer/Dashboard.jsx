@@ -104,7 +104,15 @@ export default function CustomerDashboard() {
                       <p className="font-medium text-gray-900">{a.patient_name}</p>
                       <p className="text-gray-400">{a.appointment_time?.slice(0, 5)} · {a.doctor_name || 'Unassigned'}</p>
                     </div>
-                    <Badge tone={a.status}>{a.status}</Badge>
+                    <div className="flex items-center gap-2">
+                      {/* A QR self-booking's payment is patient-self-reported until this
+                          clinic's own front desk verifies the UPI payment and confirms it
+                          (see BookingSettings.jsx's QR Bookings table) -- flag it here too
+                          so it doesn't read as a normal confirmed appointment in the
+                          meantime. */}
+                      {a.payment_status === 'pending' && <Badge tone="pending">payment pending</Badge>}
+                      <Badge tone={a.status}>{a.status}</Badge>
+                    </div>
                   </div>
                 ))}
               </div>
