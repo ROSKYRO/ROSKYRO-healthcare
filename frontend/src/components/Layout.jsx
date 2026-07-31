@@ -13,7 +13,6 @@ const NAV = {
     { to: '/app', label: 'Dashboard', icon: '\u{1F3E0}', end: true },
     { section: 'GROW', pillar: 'grow' },
     { to: '/app/growth', label: 'Growth Hub', icon: '\u{1F680}', pillar: 'grow' },
-    { to: '/app/reviews', label: 'Reviews', icon: '\u{2B50}', pillar: 'grow' },
     { to: '/app/reports', label: 'Growth Reports', icon: '\u{1F4C8}', pillar: 'grow' },
     { section: 'MANAGE', pillar: 'manage' },
     { to: '/app/appointments', label: 'Appointments', icon: '\u{1F4C5}', pillar: 'manage' },
