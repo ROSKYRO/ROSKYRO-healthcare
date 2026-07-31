@@ -121,11 +121,16 @@ class BookSlotBody(BaseModel):
 @router.post("/{org_id}/book", status_code=201)
 async def book_slot(org_id: str, body: BookSlotBody, request: Request = None):
     """Patient submits their own details, picks a doctor + date + time, and
-    is queued in order for that doctor. Called by the frontend only after
-    the patient has been shown the clinic's UPI ID and self-confirmed
-    payment (or immediately, for a doctor with no consultation fee) -- so
-    hitting this endpoint at all means payment is done; there's no
-    separate "pending" state to reconcile later. Postgres used `SELECT
+    is queued in order for that doctor. Called by the frontend after the
+    patient has been shown the clinic's UPI ID + QR and self-confirmed
+    payment (or immediately, for a doctor with no consultation fee). The
+    slot/token is reserved right away (see the capacity/token counters
+    below) so nobody else can double-book it -- but for a fee>0 doctor the
+    booking starts life as payment_status "pending": this confirmation is
+    entirely self-reported by the patient, over a payment that lands in
+    the CLINIC's own UPI account (never ROSKYRO's), so only the clinic's
+    own staff -- who can actually see the money arrive -- can confirm it
+    (BookingSettings.jsx's QR Bookings table). Postgres used `SELECT
     ... FOR UPDATE` to lock the slot's rows before counting so two
     patients booking the same slot at the same instant can't both slip
     past a stale capacity check. Mongo multi-doc transactions need a
@@ -213,14 +218,11 @@ async def book_slot(org_id: str, body: BookSlotBody, request: Request = None):
     booking_code = f"BK-{str(booking_seq).zfill(6)}"
 
     fee = float(doctor.get("consultation_fee") or 0)
-    # The frontend only calls this endpoint after the patient has already
-    # been shown the clinic's UPI ID and self-confirmed they've paid (the
-    # "Maine Payment Kar Diya — Confirm Booking" step) -- there is no
-    # "payment pending" limbo state for QR bookings. A booking is only
-    # ever created, and a token only ever issued, once payment is done.
-    # Doctors with no consultation fee (fee == 0) skip the payment step
-    # entirely and book straight through.
-    payment_status = "paid" if fee > 0 else "not_required"
+    # A fee>0 booking always starts "pending" -- only the clinic's own front
+    # desk, verifying the UPI payment actually landed, can confirm it (see
+    # PATCH /appointments/{id} paymentStatus="paid"). Doctors with no
+    # consultation fee (fee == 0) need no confirmation at all.
+    payment_status = "pending" if fee > 0 else "not_required"
 
     # Round 19: a QR booking is where the same-name collision bites
     # hardest -- the patient types their own name, nobody at the clinic
@@ -245,7 +247,14 @@ async def book_slot(org_id: str, body: BookSlotBody, request: Request = None):
 
     return {
         "appointment": to_out(doc),
-        "payment": {"collected": True, "upiId": settings.get("upi_id"), "amount": fee} if fee > 0 else {"collected": False},
+        # "collected" no longer means "so the money is verified" -- it just
+        # tells the frontend whether a payment step happened at all. The
+        # separate "pending" flag is what actually distinguishes "patient
+        # claims paid, clinic hasn't confirmed yet" from "nothing to pay."
+        "payment": (
+            {"collected": True, "pending": True, "upiId": settings.get("upi_id"), "amount": fee}
+            if fee > 0 else {"collected": False, "pending": False}
+        ),
         "tokenNumber": token_number,
         "bookingCode": booking_code,
         "doctor": {"id": doctor["_id"], "name": doctor["name"], "specialty": doctor.get("specialty")},

@@ -3,10 +3,11 @@ import re
 from fastapi import APIRouter, HTTPException, Depends
 
 from app.db import organizations, users, organization_subscriptions, plans as plans_collection
-from app.auth import get_current_user, require_internal, hash_password
+from app.auth import get_current_user, require_internal, require_roles, hash_password
 from app.utils.audit import log_audit
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.phone import normalize_phone
+from app.utils.org_lifecycle import deactivate_org, activate_org, hard_delete_org
 from app.routers.referrals import REFERRAL_CREATOR_BUSINESS_TYPES
 
 router = APIRouter(prefix="/api/orgs", tags=["orgs"], dependencies=[Depends(get_current_user)])
@@ -172,6 +173,68 @@ async def patch_org(org_id: str, body: dict, current_user: dict = Depends(get_cu
 
     await log_audit(current_user["id"], "organization.updated", "organization", org_id, body)
     return {"organization": to_out(updated)}
+
+
+# Round 24: "har payment k bad payment confirmation k baad hi patient,
+# business and partner active show hoga. iska right sirf us admin ko hoga
+# jha se ye sab manage ho rhe hai" -- account-level activate/deactivate/
+# delete for a business OR partner org, restricted to roskyro_admin only
+# (same require_roles pattern as round 23's Payment Confirmations page --
+# NOT any internal user, unlike the generic PATCH above which any internal
+# staff can already use for profile fields). Deliberately a separate
+# `is_suspended` flag rather than reusing the existing `status` field:
+# `status` already means something else here (every org is created with
+# status "onboarding" and nothing in this codebase ever flips it to
+# "active" -- see auth.py register()), so gating login on `status != active`
+# would have locked out literally every existing business/partner. This new
+# flag is independent of that and only ever set by this endpoint.
+@router.post("/{org_id}/deactivate", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def deactivate(org_id: str, current_user: dict = Depends(get_current_user)):
+    org = await organizations.find_one({"_id": org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    await deactivate_org(org_id, current_user["id"])
+    await log_audit(current_user["id"], "organization.deactivated", "organization", org_id, {"name": org.get("name")})
+    updated = await organizations.find_one({"_id": org_id})
+    return {"organization": to_out(updated)}
+
+
+@router.post("/{org_id}/activate", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def activate(org_id: str, current_user: dict = Depends(get_current_user)):
+    org = await organizations.find_one({"_id": org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    await activate_org(org_id)
+    await log_audit(current_user["id"], "organization.activated", "organization", org_id, {"name": org.get("name")})
+    updated = await organizations.find_one({"_id": org_id})
+    return {"organization": to_out(updated)}
+
+
+@router.delete("/{org_id}", dependencies=[Depends(require_roles("roskyro_admin"))])
+async def delete_org(org_id: str, body: dict, current_user: dict = Depends(get_current_user)):
+    """Permanent, irreversible delete of this org and every row anywhere in
+    the database that belongs to it (appointments, patients, subscriptions,
+    referrals, invoices, doctors, team accounts -- everything; see
+    app/utils/org_lifecycle.py for the full list). Requires the caller to
+    type the organization's exact current name as a confirmation -- there is
+    no undo, unlike every other lifecycle action in this app (which are all
+    reversible flips: deactivate/reactivate a team member, reject a payment
+    and let them resubmit, etc.)."""
+    org = await organizations.find_one({"_id": org_id})
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    confirm_name = (body.get("confirmName") or "").strip()
+    if confirm_name != (org.get("name") or ""):
+        raise HTTPException(status_code=400, detail="Confirmation name does not match this organization's name.")
+
+    # Log BEFORE deleting -- the audit trail is the only record this org
+    # ever existed once this call finishes, so it must never depend on data
+    # this same call is about to erase.
+    await log_audit(current_user["id"], "organization.deleted", "organization", org_id, {
+        "name": org.get("name"), "businessType": org.get("business_type"), "isPartner": org.get("is_partner"),
+    })
+    counts = await hard_delete_org(org_id)
+    return {"deleted": True, "orgId": org_id, "counts": counts}
 
 
 @router.get("/{org_id}/team")

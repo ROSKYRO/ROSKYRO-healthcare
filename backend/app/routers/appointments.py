@@ -11,6 +11,7 @@ from app.auth import get_current_user
 from app.utils.plans import require_plan
 from app.utils.patients import safe_resolve_patient_id
 from app.utils.ids import new_id, to_out, to_out_many
+from app.utils.audit import log_audit
 
 router = APIRouter(
     prefix="/api/appointments", tags=["appointments"],
@@ -341,6 +342,16 @@ async def patch_appointment(appointment_id: str, body: dict, current_user: dict 
         raise HTTPException(status_code=400, detail="Nothing to update.")
 
     await appointments.update_one({"_id": appointment_id}, {"$set": updates})
+    # A QR booking's payment starts "pending" (self-reported by the patient,
+    # over a payment the clinic's own UPI account received) and only this
+    # PATCH -- fired by the clinic's own staff from the QR Bookings table --
+    # flips it to "paid". That's the actual trust boundary for the booking,
+    # so it gets an audit trail like every other payment-confirmation action
+    # in the app (see plans.py's confirm_payment()).
+    if existing.get("payment_status") == "pending" and updates.get("payment_status") == "paid":
+        await log_audit(current_user["id"], "appointment.payment_confirmed", "appointment", appointment_id, {
+            "orgId": existing["org_id"], "amount": existing.get("payment_amount"),
+        })
     # Cancelling a QR booking must give its seat back. Slot availability on
     # the public booking page is computed from live appointments (excluding
     # "cancelled"), but the actual booking is gated by an atomic counter in
