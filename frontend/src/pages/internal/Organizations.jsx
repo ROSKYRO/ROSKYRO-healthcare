@@ -49,6 +49,79 @@ function DeleteOrgModal({ org, busy, error, onCancel, onConfirm }) {
   );
 }
 
+// Round 25: "growth hub me esa link section add karde jisse business apne
+// sare platform ... kuch ek hi jagah se dekh ske ki kya progress hai" -- the
+// business's own Growth Hub / Dashboard now shows quick links out to its
+// Google Business Profile, social accounts, website etc. ROSKYRO's internal
+// team maintains these on the business's behalf (backend: PUT
+// /orgs/{org_id}/platform-links, require_internal -- any internal role, not
+// just super admin, unlike the destructive round-24 lifecycle actions
+// below), so this "Edit Links" action is visible to every internal viewer
+// of this page.
+function PlatformLinksModal({ org, busy, error, onCancel, onSave }) {
+  const [rows, setRows] = useState(
+    org.platform_links && org.platform_links.length > 0
+      ? org.platform_links.map((l) => ({ label: l.label, url: l.url }))
+      : [{ label: '', url: '' }]
+  );
+
+  function updateRow(i, field, value) {
+    setRows((prev) => prev.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  }
+  function addRow() {
+    setRows((prev) => [...prev, { label: '', url: '' }]);
+  }
+  function removeRow(i) {
+    setRows((prev) => prev.filter((_, idx) => idx !== i));
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <Card className="max-w-lg w-full p-6 max-h-[90vh] overflow-y-auto">
+        <p className="text-xs font-semibold text-brand-600 uppercase tracking-wide">Platform links</p>
+        <h3 className="text-lg font-bold text-gray-900 mt-1">{org.name}</h3>
+        <p className="text-sm text-gray-500 mt-2">
+          Google Business Profile, social media, website — jo bhi links yahan set karoge, wo is business ke
+          Growth Hub aur Dashboard par direct dikhenge.
+        </p>
+        <div className="mt-4 space-y-3">
+          {rows.map((row, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <div className="flex-1 space-y-2">
+                <Input
+                  placeholder="Label — jaise Google Business Profile"
+                  value={row.label}
+                  onChange={(e) => updateRow(i, 'label', e.target.value)}
+                />
+                <Input
+                  placeholder="https://..."
+                  value={row.url}
+                  onChange={(e) => updateRow(i, 'url', e.target.value)}
+                />
+              </div>
+              <Button size="sm" variant="ghost" className="mt-1" onClick={() => removeRow(i)} disabled={rows.length === 1}>
+                ✕
+              </Button>
+            </div>
+          ))}
+        </div>
+        <Button size="sm" variant="secondary" className="mt-3" onClick={addRow}>+ Add link</Button>
+        {error && <p className="text-sm text-rose-600 mt-3">{error}</p>}
+        <div className="mt-5 flex items-center gap-3">
+          <Button variant="secondary" className="flex-1" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button
+            className="flex-1"
+            disabled={busy}
+            onClick={() => onSave(rows.map((r) => ({ label: r.label.trim(), url: r.url.trim() })).filter((r) => r.label || r.url))}
+          >
+            {busy ? 'Saving…' : 'Save Links'}
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function Organizations() {
   const { user } = useAuth();
   const isSuperAdmin = user?.role === 'roskyro_admin';
@@ -57,6 +130,9 @@ export default function Organizations() {
   const [busyId, setBusyId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null); // org row
   const [deleteError, setDeleteError] = useState('');
+  const [linksTarget, setLinksTarget] = useState(null); // org row
+  const [linksBusy, setLinksBusy] = useState(false);
+  const [linksError, setLinksError] = useState('');
 
   const load = () => {
     setError('');
@@ -77,6 +153,21 @@ export default function Organizations() {
       setError(err?.response?.data?.error || 'Could not update this organization.');
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function saveLinks(links) {
+    if (!linksTarget) return;
+    setLinksBusy(true);
+    setLinksError('');
+    try {
+      await api.put(`/orgs/${linksTarget.id}/platform-links`, { links });
+      setLinksTarget(null);
+      load();
+    } catch (err) {
+      setLinksError(err?.response?.data?.error || 'Could not save these links.');
+    } finally {
+      setLinksBusy(false);
     }
   }
 
@@ -150,6 +241,13 @@ export default function Organizations() {
             },
             { key: 'visibility_score', header: 'Visibility Score' },
             { key: 'created_at', header: 'Onboarded', render: (r) => formatDate(r.created_at) },
+            {
+              key: 'platform_links', header: 'Platform Links', render: (r) => (
+                <Button size="sm" variant="secondary" onClick={() => { setLinksTarget(r); setLinksError(''); }}>
+                  {r.platform_links && r.platform_links.length > 0 ? `Edit Links (${r.platform_links.length})` : 'Add Links'}
+                </Button>
+              ),
+            },
             ...(isSuperAdmin ? [{
               key: 'actions', header: '', render: (r) => (
                 <div className="flex items-center gap-2 justify-end min-w-[220px]">
@@ -173,6 +271,16 @@ export default function Organizations() {
           error={deleteError}
           onCancel={() => setDeleteTarget(null)}
           onConfirm={confirmDelete}
+        />
+      )}
+
+      {linksTarget && (
+        <PlatformLinksModal
+          org={linksTarget}
+          busy={linksBusy}
+          error={linksError}
+          onCancel={() => setLinksTarget(null)}
+          onSave={saveLinks}
         />
       )}
     </div>
