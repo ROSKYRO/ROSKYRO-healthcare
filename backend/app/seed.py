@@ -272,6 +272,7 @@ async def run():
             "subscription_plan": random.choice(["starter", "growth", "scale"]),
             "status": "active", "is_partner": is_partner, "visibility_score": 55 + random.randint(0, 39),
             "legal_name": None, "address": None, "pincode": None, "website": None, "logo_url": None,
+            "platform_links": [],
             "created_at": now(), "updated_at": now(),
         }
         await organizations.insert_one(doc)
@@ -654,6 +655,17 @@ async def run():
             "summary": {"newPatients": 12, "revenueGrowthPct": 8.4, "reviewsGained": 5, "referralsSent": 2},
             "file_url": None, "generated_by": team_ids["roskyro_growth_expert"], "created_at": now(),
         })
+        # Round 25: quick-access links to this business's own platforms
+        # (Google Business Profile, social accounts, website), maintained by
+        # ROSKYRO's internal team via PUT /orgs/{org_id}/platform-links --
+        # shown on the customer's Growth Hub / Dashboard so they can check
+        # their own progress on each platform in one place.
+        slug = "".join(c for c in org["name"].lower() if c.isalnum())
+        await organizations.update_one({"_id": org["_id"]}, {"$set": {"platform_links": [
+            {"id": new_id(), "label": "Google Business Profile", "url": f"https://g.page/{slug}"},
+            {"id": new_id(), "label": "Instagram", "url": f"https://instagram.com/{slug}"},
+            {"id": new_id(), "label": "Website", "url": f"https://{slug}.example.com"},
+        ]}})
 
     # -----------------------------------------------------------------
     # MANAGE pillar data: Patient CRM, Queue, Follow-ups, Billing,
