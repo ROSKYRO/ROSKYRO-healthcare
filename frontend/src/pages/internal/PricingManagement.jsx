@@ -318,6 +318,12 @@ export default function PricingManagement() {
 
       <Card>
         <CardHeader title="UPI Payment Collection" subtitle="Shown to every customer at the moment they activate a subscription" />
+        {!payment.upi_id && (
+          <p className="mx-5 text-xs font-semibold text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+            Not set yet — until a UPI ID is saved here, business &amp; partner subscription checkout cannot
+            collect any payment ("I've Paid" stays disabled for customers).
+          </p>
+        )}
         <form onSubmit={savePayment} className="px-5 pb-5 space-y-4">
           <Input label="UPI ID" value={paymentForm.upiId} onChange={(e) => setPaymentForm((f) => ({ ...f, upiId: e.target.value }))} placeholder="roskyro@okhdfcbank" required />
           <Textarea
