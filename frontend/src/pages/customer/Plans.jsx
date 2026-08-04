@@ -16,15 +16,22 @@ function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
   const [copied, setCopied] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState(null);
   const price = cycle === 'yearly' ? plan.yearly_price : plan.monthly_price;
+  // If ROSKYRO's own platform UPI ID hasn't been set yet (Pricing & Payments,
+  // super admin), there is nowhere for the business to actually send money --
+  // don't render an infinite loading skeleton (looks like a bug) and don't
+  // let them submit a "paid" confirmation for a payment that has no real
+  // destination.
+  const upiConfigured = Boolean(payment?.upi_id);
 
   useEffect(() => {
     let cancelled = false;
+    if (!upiConfigured) return;
     setQrDataUrl(null);
     upiPaymentQrDataUrl({ upiId: payment.upi_id, amount: price, note: `ROSKYRO ${plan.name}` })
       .then((url) => { if (!cancelled) setQrDataUrl(url); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [payment.upi_id, price, plan.name]);
+  }, [payment.upi_id, price, plan.name, upiConfigured]);
 
   function copyUpi() {
     navigator.clipboard?.writeText(payment.upi_id).then(() => {
@@ -42,24 +49,35 @@ function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
         </p>
         <p className="text-xs text-brand-700 font-semibold uppercase tracking-wide">{cycle === 'yearly' ? 'Annual Membership' : 'Monthly Subscription'}</p>
 
-        <div className="mt-5 bg-gray-50 border border-gray-200 rounded-xl p-4">
-          <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
-          <div className="flex justify-center mt-2">
-            {qrDataUrl ? (
-              <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
-            ) : (
-              <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
-            )}
-          </div>
-          <div className="flex items-center justify-between mt-4">
-            <div>
-              <p className="text-xs text-gray-400">or pay to this UPI ID</p>
-              <p className="text-lg font-bold text-gray-900">{payment.upi_id}</p>
+        {upiConfigured ? (
+          <div className="mt-5 bg-gray-50 border border-gray-200 rounded-xl p-4">
+            <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
+            <div className="flex justify-center mt-2">
+              {qrDataUrl ? (
+                <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
+              ) : (
+                <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
+              )}
             </div>
-            <Button size="sm" variant="secondary" onClick={copyUpi}>{copied ? 'Copied!' : 'Copy'}</Button>
+            <div className="flex items-center justify-between mt-4">
+              <div>
+                <p className="text-xs text-gray-400">or pay to this UPI ID</p>
+                <p className="text-lg font-bold text-gray-900">{payment.upi_id}</p>
+              </div>
+              <Button size="sm" variant="secondary" onClick={copyUpi}>{copied ? 'Copied!' : 'Copy'}</Button>
+            </div>
+            <p className="text-sm text-gray-500 mt-3">{payment.payment_note}</p>
           </div>
-          <p className="text-sm text-gray-500 mt-3">{payment.payment_note}</p>
-        </div>
+        ) : (
+          <div className="mt-5 bg-rose-50 border border-rose-200 rounded-xl p-4">
+            <p className="text-sm font-semibold text-rose-800">Payment collection abhi set up nahi hai</p>
+            <p className="text-xs text-rose-700 mt-1">
+              ROSKYRO ne apna UPI ID abhi Pricing &amp; Payments mein add nahi kiya hai, isliye is pillar ke liye
+              payment nahi liya ja sakta. Kripya ROSKYRO support se contact karein — jab tak ye set nahi hota,
+              "I've Paid" submit karna disable rahega.
+            </p>
+          </div>
+        )}
 
         <p className="text-xs text-gray-500 mt-4 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
           Payment karne ke baad "I've Paid" dabayein — ROSKYRO team payment verify karke aapka plan confirm karegi,
@@ -68,7 +86,7 @@ function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
 
         <div className="mt-4 flex items-center gap-3">
           <Button variant="secondary" className="flex-1" onClick={onCancel} disabled={busy}>Cancel</Button>
-          <Button className="flex-1" onClick={onConfirm} disabled={busy}>{busy ? 'Submitting…' : "I've Paid — Submit for Confirmation"}</Button>
+          <Button className="flex-1" onClick={onConfirm} disabled={busy || !upiConfigured}>{busy ? 'Submitting…' : "I've Paid — Submit for Confirmation"}</Button>
         </div>
       </Card>
     </div>
