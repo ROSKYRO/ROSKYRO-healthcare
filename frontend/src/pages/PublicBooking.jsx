@@ -246,6 +246,11 @@ export default function PublicBooking() {
 
   if (state === 'payment' && selectedDoctor) {
     const fee = Number(selectedDoctor.consultationFee) || 0;
+    // If this clinic has a paid doctor but never set its own booking UPI ID
+    // in Booking Settings, there's no real payment destination -- don't
+    // show an endless loading skeleton with a blank UPI line (looks broken),
+    // and don't let the patient claim "I've paid" for nothing.
+    const upiConfigured = Boolean(page?.settings?.upiId);
     return (
       <CenterShell>
         <Card className="p-8 max-w-sm w-full text-center">
@@ -257,27 +262,37 @@ export default function PublicBooking() {
           <p className="text-3xl font-extrabold text-brand-700 mt-3">{formatCurrency(fee)}</p>
           <p className="text-xs text-gray-400 mt-1">{fmtDateLabel(selectedDate)} · {selectedTime}</p>
 
-          <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
-            <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
-            <div className="flex justify-center mt-2">
-              {qrDataUrl ? (
-                <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
-              ) : (
-                <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
-              )}
+          {upiConfigured ? (
+            <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <p className="text-xs text-gray-400 text-center">Scan &amp; pay via any UPI app</p>
+              <div className="flex justify-center mt-2">
+                {qrDataUrl ? (
+                  <img src={qrDataUrl} alt="UPI payment QR code" width={180} height={180} className="rounded-lg border border-gray-200 bg-white" />
+                ) : (
+                  <div className="w-[180px] h-[180px] bg-gray-100 animate-pulse rounded-lg" />
+                )}
+              </div>
+              <p className="text-xs text-gray-500 text-left mt-3">Or pay via UPI to:</p>
+              <p className="text-base font-mono font-bold text-gray-900 mt-1 break-all text-left">{page?.settings?.upiId}</p>
+              <p className="text-xs text-gray-500 mt-3 text-left">
+                Pehle UPI se pay karein, phir neeche confirm karein — token mil jayega, lekin clinic aapki payment
+                verify karke confirm karegi tabhi booking final hogi.
+              </p>
             </div>
-            <p className="text-xs text-gray-500 text-left mt-3">Or pay via UPI to:</p>
-            <p className="text-base font-mono font-bold text-gray-900 mt-1 break-all text-left">{page?.settings?.upiId}</p>
-            <p className="text-xs text-gray-500 mt-3 text-left">
-              Pehle UPI se pay karein, phir neeche confirm karein — token mil jayega, lekin clinic aapki payment
-              verify karke confirm karegi tabhi booking final hogi.
-            </p>
-          </div>
+          ) : (
+            <div className="mt-5 rounded-xl border border-rose-200 bg-rose-50 p-4 text-left">
+              <p className="text-sm font-semibold text-rose-800">Online payment abhi available nahi hai</p>
+              <p className="text-xs text-rose-700 mt-1">
+                Ye clinic ne apna UPI payment abhi set nahi kiya hai. Kripya reception par direct contact karein
+                booking confirm karne ke liye.
+              </p>
+            </div>
+          )}
 
           {errorMsg && <p className="text-sm text-rose-600 mt-3">{errorMsg}</p>}
 
           <div className="mt-5 space-y-2">
-            <Button className="w-full" onClick={doBook} disabled={confirming}>
+            <Button className="w-full" onClick={doBook} disabled={confirming || !upiConfigured}>
               {confirming ? 'Confirming…' : 'Maine Payment Kar Diya — Confirm Booking'}
             </Button>
             <button type="button" onClick={() => setState('ready')} className="text-xs font-medium text-gray-500 hover:text-gray-700">
