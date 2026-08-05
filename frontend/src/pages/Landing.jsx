@@ -69,55 +69,60 @@ export default function Landing() {
     });
   }, []);
 
+  // Homepage is a plain white page, like the rest of the public site --
+  // only the accent color (indigo-violet, via the `landing` scale) stays
+  // matched to the logo. `PublicHeader landing` swaps just that accent;
+  // the header itself sits on the same white background as everything else,
+  // so the logo mark reads clearly against it (no dark-on-dark blending).
   return (
-    <div className="min-h-screen bg-gradient-to-b from-brand-950 to-brand-900 text-white">
-      <PublicHeader dark />
+    <div className="min-h-screen bg-white">
+      <PublicHeader landing />
 
       <section className="max-w-4xl mx-auto px-6 pt-16 pb-20 text-center">
-        <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-white/10 rounded-full px-3 py-1 mb-6">
+        <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-landing-50 text-landing-700 rounded-full px-3 py-1 mb-6">
           AI Business Software for Healthcare
         </p>
-        <h1 className="text-4xl md:text-5xl font-extrabold leading-tight tracking-tight">
+        <h1 className="text-4xl md:text-5xl font-extrabold leading-tight tracking-tight text-gray-900">
           The AI + Human operating system<br /> for your healthcare business
         </h1>
-        <p className="mt-6 text-lg text-brand-100 max-w-2xl mx-auto">
+        <p className="mt-6 text-lg text-gray-600 max-w-2xl mx-auto">
           Most AI companies sell software. ROSKYRO sells outcomes. You never learn AI, never write a prompt,
           never see a technical process — you approve results and watch your business grow.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-          <Link to="/contact?reason=consultation" className="bg-white text-brand-900 font-semibold px-6 py-3 rounded-xl hover:bg-brand-50">
+          <Link to="/contact?reason=consultation" className="bg-landing-600 text-white font-semibold px-6 py-3 rounded-xl hover:bg-landing-700">
             Get Free Consultation
           </Link>
-          <Link to="/contact?reason=demo" className="border border-white/30 font-semibold px-6 py-3 rounded-xl hover:bg-white/10">
+          <Link to="/contact?reason=demo" className="border border-gray-300 text-gray-700 font-semibold px-6 py-3 rounded-xl hover:bg-gray-50">
             Book Demo
           </Link>
         </div>
 
-        <div className="mt-14 rounded-2xl border border-white/10 bg-white/5 backdrop-blur px-6 py-10">
-          <p className="text-xs uppercase tracking-wide text-brand-200 font-semibold mb-4">Your Dashboard, At A Glance</p>
+        <div className="mt-14 rounded-2xl border border-gray-200 bg-gray-50 px-6 py-10">
+          <p className="text-xs uppercase tracking-wide text-landing-700 font-semibold mb-4">Your Dashboard, At A Glance</p>
           <div className="grid sm:grid-cols-3 gap-4 text-left">
-            <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-              <p className="text-xs text-brand-200">🚀 Grow</p>
-              <p className="text-sm font-semibold mt-1">Visibility score, reviews, ranking</p>
+            <div className="rounded-xl bg-white border border-gray-200 p-4">
+              <p className="text-xs text-landing-600">🚀 Grow</p>
+              <p className="text-sm font-semibold text-gray-900 mt-1">Visibility score, reviews, ranking</p>
             </div>
-            <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-              <p className="text-xs text-brand-200">⚙️ Manage</p>
-              <p className="text-sm font-semibold mt-1">Appointments, queue, billing</p>
+            <div className="rounded-xl bg-white border border-gray-200 p-4">
+              <p className="text-xs text-landing-600">⚙️ Manage</p>
+              <p className="text-sm font-semibold text-gray-900 mt-1">Appointments, queue, billing</p>
             </div>
-            <div className="rounded-xl bg-white/5 border border-white/10 p-4">
-              <p className="text-xs text-brand-200">🤝 Networking Marketing</p>
-              <p className="text-sm font-semibold mt-1">Referrals, partner network</p>
+            <div className="rounded-xl bg-white border border-gray-200 p-4">
+              <p className="text-xs text-landing-600">🤝 Networking Marketing</p>
+              <p className="text-sm font-semibold text-gray-900 mt-1">Referrals, partner network</p>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="bg-white text-gray-900 rounded-t-[2.5rem] py-16">
+      <section className="bg-white text-gray-900 py-16">
         <div className="max-w-6xl mx-auto px-6">
           <h2 className="text-lg font-semibold text-gray-500 text-center">Trusted by healthcare businesses like</h2>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             {TRUSTED_BY.map((a) => (
-              <span key={a} className="text-sm bg-brand-50 text-brand-700 px-3 py-1.5 rounded-full font-medium">{a}</span>
+              <span key={a} className="text-sm bg-landing-50 text-landing-700 px-3 py-1.5 rounded-full font-medium">{a}</span>
             ))}
           </div>
 
@@ -144,7 +149,7 @@ export default function Landing() {
                   <ul className="mt-4 space-y-1.5">
                     {p.items.map((i) => (
                       <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
-                        <span className="mt-0.5 text-brand-600">✓</span><span>{i}</span>
+                        <span className="mt-0.5 text-landing-600">✓</span><span>{i}</span>
                       </li>
                     ))}
                   </ul>
@@ -153,7 +158,7 @@ export default function Landing() {
               ))}
             </div>
             <div className="text-center mt-8">
-              <Link to="/pricing" className="text-brand-700 font-semibold text-sm">See full pricing & the bundled Complete Platform →</Link>
+              <Link to="/pricing" className="text-landing-700 font-semibold text-sm">See full pricing & the bundled Complete Platform →</Link>
             </div>
           </div>
 
@@ -162,7 +167,7 @@ export default function Landing() {
             <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {WHY_ROSKYRO.map((w) => (
                 <div key={w.title} className="border border-gray-200 rounded-2xl p-6">
-                  <div className="h-10 w-10 rounded-xl bg-brand-50 flex items-center justify-center text-lg">{w.emoji}</div>
+                  <div className="h-10 w-10 rounded-xl bg-landing-50 flex items-center justify-center text-lg">{w.emoji}</div>
                   <h3 className="font-bold text-gray-900 mt-3">{w.title}</h3>
                   <p className="text-sm text-gray-600 mt-2 leading-relaxed">{w.body}</p>
                 </div>
@@ -175,7 +180,7 @@ export default function Landing() {
             <div className="mt-8 grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
               {HOW_IT_WORKS.map((s) => (
                 <div key={s.step} className="text-center">
-                  <div className="h-12 w-12 mx-auto rounded-full bg-brand-950 text-white flex items-center justify-center font-bold">{s.step}</div>
+                  <div className="h-12 w-12 mx-auto rounded-full bg-landing-950 text-white flex items-center justify-center font-bold">{s.step}</div>
                   <h3 className="font-bold text-gray-900 mt-4">{s.title}</h3>
                   <p className="text-sm text-gray-600 mt-1.5 leading-relaxed">{s.body}</p>
                 </div>
@@ -194,7 +199,7 @@ export default function Landing() {
 
           <div className="mt-20 border border-gray-200 rounded-2xl p-8 md:p-12">
             <div className="max-w-2xl mx-auto text-center">
-              <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-brand-50 text-brand-700 rounded-full px-3 py-1 mb-4">
+              <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-landing-50 text-landing-700 rounded-full px-3 py-1 mb-4">
                 {'\u{1F91D}'} Networking Marketing
               </p>
               <h3 className="text-2xl font-bold text-gray-900">Verified Healthcare Service Partners</h3>
@@ -203,7 +208,7 @@ export default function Landing() {
                 healthcare services — all from one platform. Listing your business as a Networking Marketing partner is always
                 free — every doctor, clinic and hospital chooses their own partners on their own terms.
               </p>
-              <Link to="/register" className="inline-block mt-4 text-brand-700 font-semibold text-sm">Join Networking Marketing for free →</Link>
+              <Link to="/register" className="inline-block mt-4 text-landing-700 font-semibold text-sm">Join Networking Marketing for free →</Link>
             </div>
           </div>
 
@@ -213,17 +218,17 @@ export default function Landing() {
               <FaqList items={FAQ_HOMEPAGE} />
             </div>
             <div className="text-center mt-6">
-              <Link to="/faq" className="text-brand-700 font-semibold text-sm">See all FAQs →</Link>
+              <Link to="/faq" className="text-landing-700 font-semibold text-sm">See all FAQs →</Link>
             </div>
           </div>
 
-          <div className="mt-20 bg-brand-950 text-white rounded-2xl p-8 md:p-12 text-center">
+          <div className="mt-20 bg-landing-950 text-white rounded-2xl p-8 md:p-12 text-center">
             <h3 className="text-2xl font-bold">Ready to Grow Your Healthcare Business?</h3>
-            <p className="mt-3 text-brand-100 max-w-2xl mx-auto">
+            <p className="mt-3 text-landing-100 max-w-2xl mx-auto">
               "How does this reduce work for the healthcare business owner while increasing measurable business
               growth?" Every feature in ROSKYRO Healthcare OS answers that question — or it doesn't ship.
             </p>
-            <Link to="/contact?reason=demo" className="inline-block mt-6 bg-white text-brand-900 font-semibold px-6 py-3 rounded-xl hover:bg-brand-50">
+            <Link to="/contact?reason=demo" className="inline-block mt-6 bg-white text-landing-900 font-semibold px-6 py-3 rounded-xl hover:bg-landing-50">
               Book Demo
             </Link>
           </div>
