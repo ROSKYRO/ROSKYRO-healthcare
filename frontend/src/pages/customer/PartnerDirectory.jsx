@@ -29,7 +29,7 @@ export default function PartnerDirectory() {
       api.get('/partners', { params: { category: category || undefined, q: q || undefined } })
         .then((res) => setPartners(res.data.partners))
         .catch((err) => {
-          // Browsing the full directory needs the Networking Marketing plan (unlike free
+          // Browsing the full directory needs the CONNECT plan (unlike free
           // self-registration via "Become a Partner") — show an upgrade
           // prompt instead of letting the request crash the page.
           if (err?.response?.status === 402) {
@@ -55,7 +55,7 @@ export default function PartnerDirectory() {
     return (
       <EmptyState
         title="Your business type can't choose/create referrals."
-        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek Networking Marketing partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
+        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek CONNECT partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
         action={<Link to="/app/become-partner"><Button size="sm">Become a Partner</Button></Link>}
       />
     );
@@ -99,9 +99,9 @@ export default function PartnerDirectory() {
 
       {!sortedPartners ? <PageLoading /> : locked ? (
         <EmptyState
-          title="Browsing the full Partner Directory needs the Networking Marketing plan."
+          title="Browsing the full Partner Directory needs the CONNECT plan."
           subtitle="You can still list your own business as a partner for free — other businesses will be able to find and refer to you either way."
-          action={<Link to="/app/plans"><Button size="sm">Activate Networking Marketing</Button></Link>}
+          action={<Link to="/app/plans"><Button size="sm">Activate CONNECT</Button></Link>}
         />
       ) : sortedPartners.length === 0 ? (
         <EmptyState title="No partners found." subtitle="Try a different category or search term." />

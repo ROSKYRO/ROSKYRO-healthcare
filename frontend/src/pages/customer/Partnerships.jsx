@@ -64,7 +64,7 @@ export default function Partnerships() {
           setPickerResults([]);
           setPickerError(
             err?.response?.status === 402
-              ? 'Networking Marketing plan required to browse partners.'
+              ? 'CONNECT plan required to browse partners.'
               : (err?.response?.data?.error || 'Could not load partners. Please try again.')
           );
         });

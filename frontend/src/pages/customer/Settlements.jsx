@@ -131,7 +131,7 @@ export default function CustomerSettlements() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Marketing Fee Payouts</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Jab aap kisi ROSKYRO Networking Marketing partner ko patient refer karte hain, to ise us partner ke liye aapki taraf se
+          Jab aap kisi ROSKYRO CONNECT partner ko patient refer karte hain, to ise us partner ke liye aapki taraf se
           ki gayi marketing maana jaata hai. ROSKYRO har period (month) collect hui Marketing Fees ka ek fixed{' '}
           <span className="font-semibold">{rate}%</span> aapko wapas deta hai, ek Marketing Fee Payout ke roop mein,
           seedha aapki payout UPI ID par — har payout ke saath ek invoice bhi milta hai.

@@ -56,7 +56,7 @@ export default function ReferralNew() {
         setSearchResults(res.data.partners);
       } catch (err) {
         // Previously uncaught: this endpoint 402s when the org's
-        // Networking Marketing plan isn't active, and any error silently
+        // CONNECT plan isn't active, and any error silently
         // rendered "no partners found" -- misleading the user into
         // thinking the search just came up empty rather than that the
         // plan needs activating (or the request failed for another
@@ -134,7 +134,7 @@ export default function ReferralNew() {
     return (
       <EmptyState
         title="Your business type can't create referrals."
-        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek Networking Marketing partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
+        subtitle="Referral bhejne (partner choose karne) ka right sirf Clinic, Hospital aur Eye Hospital business types ko hai. Aap phir bhi khud ko ek CONNECT partner ke roop mein list kar sakte hain, taaki doosre businesses aapko refer kar sakein."
         action={<Link to="/app/become-partner"><Button size="sm">Become a Partner</Button></Link>}
       />
     );
@@ -223,7 +223,7 @@ export default function ReferralNew() {
 
           {!searching && searchLocked && (
             <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <p className="text-sm font-medium text-amber-800">Networking Marketing plan required to search partners.</p>
+              <p className="text-sm font-medium text-amber-800">CONNECT plan required to search partners.</p>
               <Link to="/app/plans" className="text-sm text-brand-700 font-medium underline">Activate it from Plans & Billing →</Link>
             </div>
           )}

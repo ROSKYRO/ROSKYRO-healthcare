@@ -18,7 +18,7 @@ import { BUSINESS_CATEGORY_LABELS } from '../../lib/businessTaxonomy';
 const PILLAR_UPSELL = {
   grow: { emoji: '\u{1F680}', name: 'GROW', tagline: 'Visibility, reviews, SEO, social & content — all managed for you.' },
   manage: { emoji: '\u{2699}\u{FE0F}', name: 'MANAGE', tagline: 'Patient CRM, appointments, queue, billing & WhatsApp.' },
-  connect: { emoji: '\u{1F91D}', name: 'Networking Marketing', tagline: 'A verified network of trusted healthcare partners.' },
+  connect: { emoji: '\u{1F91D}', name: 'CONNECT', tagline: 'A verified network of trusted healthcare partners.' },
 };
 
 function UpsellCard({ pillar, price }) {
@@ -98,7 +98,7 @@ export default function CustomerDashboard() {
       {!hasAnyPillar && (
         <Card className="p-6 bg-brand-50 border-brand-100">
           <p className="font-semibold text-gray-900">You haven't activated a ROSKYRO pillar yet</p>
-          <p className="text-sm text-gray-600 mt-1">Pick GROW, MANAGE, Networking Marketing — or bundle all three and save — to start seeing real data here.</p>
+          <p className="text-sm text-gray-600 mt-1">Pick GROW, MANAGE, CONNECT — or bundle all three and save — to start seeing real data here.</p>
           <Link to="/app/plans"><Button className="mt-4">View plans</Button></Link>
         </Card>
       )}

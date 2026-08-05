@@ -44,7 +44,7 @@ export default function BecomePartner() {
   useEffect(load, []);
 
   // Group categories by their group_name for a grouped <optgroup> picker —
-  // matches the curated Networking Marketing taxonomy (Specialist Referrals, Diagnostics,
+  // matches the curated CONNECT taxonomy (Specialist Referrals, Diagnostics,
   // Imaging, Rehabilitation, Home Healthcare).
   const grouped = categories.reduce((acc, c) => {
     const key = c.group_name || 'Other';
@@ -108,7 +108,7 @@ export default function BecomePartner() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Become a Partner</h1>
         <p className="text-sm text-gray-500 mt-1">
-          List your business on ROSKYRO Networking Marketing for free. Doctors, clinics and hospitals across the network can then
+          List your business on ROSKYRO CONNECT for free. Doctors, clinics and hospitals across the network can then
           discover you and choose to send you referrals — the choice of who to partner with is always theirs.
         </p>
       </div>
@@ -116,12 +116,12 @@ export default function BecomePartner() {
       {alreadyPartner ? (
         <Card className="p-6">
           <p className="text-base font-semibold text-gray-900">
-            {alreadyPartner.verification_status === 'verified' ? "You're a verified Networking Marketing partner ✅" : "Application submitted ✓"}
+            {alreadyPartner.verification_status === 'verified' ? "You're a verified CONNECT partner ✅" : "Application submitted ✓"}
           </p>
           <p className="text-sm text-gray-500 mt-2">
             {alreadyPartner.verification_status === 'verified'
               ? 'Your listing is live in the Partner Directory. Businesses can now discover you and choose to refer patients your way.'
-              : 'Your free Networking Marketing listing is pending verification by the ROSKYRO team — this is usually quick. You’ll be notified as soon as it’s approved.'}
+              : 'Your free CONNECT listing is pending verification by the ROSKYRO team — this is usually quick. You’ll be notified as soon as it’s approved.'}
           </p>
           <Link to="/app/partners" className="text-sm text-brand-700 font-medium mt-4 inline-block">
             View the Partner Directory →
@@ -131,7 +131,7 @@ export default function BecomePartner() {
         <Card>
           <CardHeader
             title="Free Partner Listing"
-            subtitle="No charge to list yourself. Pick the category that best describes your service — this is the exact, curated Networking Marketing category list."
+            subtitle="No charge to list yourself. Pick the category that best describes your service — this is the exact, curated CONNECT category list."
           />
           <form onSubmit={submit} className="px-5 pb-5 space-y-4">
             <Select label="Category" value={categorySlug} onChange={(e) => setCategorySlug(e.target.value)} required>
@@ -179,7 +179,7 @@ export default function BecomePartner() {
             <div className="pt-2 border-t border-gray-100">
               <Button type="submit" disabled={busy || !categorySlug}>{busy ? 'Submitting…' : 'Submit Free Listing'}</Button>
               <p className="text-xs text-gray-400 mt-2">
-                Your listing goes live after a quick ROSKYRO verification. It's always free — there's no charge to join Networking Marketing as a partner.
+                Your listing goes live after a quick ROSKYRO verification. It's always free — there's no charge to join CONNECT as a partner.
               </p>
             </div>
           </form>
