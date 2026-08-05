@@ -18,14 +18,14 @@ from app.utils.ids import new_id, now, to_out, to_out_many
 router = APIRouter(prefix="/api/partner-plans", tags=["partner-plans"])
 
 # Partner-audience mirror of routers/plans.py -- same services (GROW /
-# MANAGE / Networking Marketing / a bundle, plus the "reels" add-on), its
+# MANAGE / CONNECT / a bundle, plus the "reels" add-on), its
 # own subscriptions collection (partner_subscriptions, separate from the
 # business side's organization_subscriptions), but pricing is NOT separate
 # -- see plans.py's patch_plan(), which now keeps this catalog's
 # monthly_price/yearly_price in sync with the business catalog's, so the
 # two audiences always show identical prices for the same service.
 #
-# Removed per explicit request: the "activate GROW + Networking Marketing
+# Removed per explicit request: the "activate GROW + CONNECT
 # (CONNECT) together -> MANAGE granted free" bonus (the mirror image of
 # plans.py's business-side rule) is retired -- see plans.py's header
 # comment for the full reasoning (only stops NEW bonuses; any partner

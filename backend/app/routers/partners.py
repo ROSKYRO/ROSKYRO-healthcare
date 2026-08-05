@@ -17,7 +17,7 @@ router = APIRouter(
     # is applied per-route below -- only to the endpoints that browse/search the paid
     # partner directory (list_partners, recommendations, get_partner). Categories,
     # self-registration ("Become a Partner"), viewing/editing your own partner profile,
-    # and internal verification must stay free of the Networking Marketing plan gate, since listing
+    # and internal verification must stay free of the CONNECT plan gate, since listing
     # yourself as a partner is free by design.
     dependencies=[Depends(get_current_user)],
 )
@@ -296,7 +296,7 @@ async def search_by_service(keyword: str = Query(..., min_length=1), current_use
 @router.get("/me")
 async def my_partner(current_user: dict = Depends(get_current_user)):
     # Looked up by org_id, not appShell -- a business can self-register as a
-    # free Networking Marketing partner from its regular customer-shell account (see
+    # free CONNECT partner from its regular customer-shell account (see
     # POST /register below), so a customer-shell user checking "did my
     # application go through / is it verified yet" needs this to work too,
     # not just partner-shell accounts managing an existing listing.

@@ -33,7 +33,7 @@ async def _none():
 
 # Only these business types have the right to choose/create a referral to a
 # partner. Everyone else (diagnostic_lab, dental, skin_clinic, physiotherapy)
-# can still list themselves as a Networking Marketing partner to be chosen by others, but
+# can still list themselves as a CONNECT partner to be chosen by others, but
 # cannot initiate a referral of their own -- see create_referral below.
 #
 # "eye_hospital" predates round 22's business-type taxonomy rewrite (see
@@ -326,7 +326,7 @@ async def create_referral(body: CreateReferralBody, current_user: dict = Depends
         raise HTTPException(
             status_code=403,
             detail="Your business type isn't eligible to create referrals. You can still list yourself as a "
-                   "Networking Marketing partner so other businesses can refer patients to you.",
+                   "CONNECT partner so other businesses can refer patients to you.",
         )
 
     partner = await partners.find_one({"_id": body.partnerId})

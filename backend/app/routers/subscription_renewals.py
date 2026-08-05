@@ -3,7 +3,7 @@ pending -> business self-reports paid -> ROSKYRO confirms received ->
 invoice lifecycle the Marketing Fee side already uses (settlements.py's
 mark-paid/confirm-received, marketing_payouts' invoices), but for money
 flowing the OTHER direction: a business owes ROSKYRO for its own
-GROW/MANAGE/Networking Marketing/Complete subscription, not a partner
+GROW/MANAGE/CONNECT/Complete subscription, not a partner
 owing ROSKYRO a per-referral fee.
 
 Deliberately scoped to RENEWALS only -- the very first billing period for

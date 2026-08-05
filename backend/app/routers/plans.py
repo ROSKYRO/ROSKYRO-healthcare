@@ -14,7 +14,7 @@ from app.utils.subscriptions import enforce_single_active
 from app.utils.ids import new_id, now, to_out, to_out_many
 
 # Removed per explicit request: the "activate MANAGE + GROW together ->
-# Networking Marketing (CONNECT) granted free" bonus is retired -- every
+# CONNECT granted free" bonus is retired -- every
 # pillar is now paid for individually, no auto-granted free pillar. This
 # ONLY stops NEW bonuses from being granted going forward; any business
 # that was already granted a free CONNECT subscription before this change

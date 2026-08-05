@@ -104,7 +104,7 @@ _TARGETS = [
 ]
 
 PRESERVED_NOTE = (
-    "Never touched: pricing catalog (GROW / MANAGE / Networking Marketing / "
+    "Never touched: pricing catalog (GROW / MANAGE / CONNECT / "
     "Complete / Reels prices for both audiences), partner categories, UPI "
     "payment settings, Marketing Fee rate & category default rates, and "
     "every ROSKYRO internal team account."

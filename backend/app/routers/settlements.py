@@ -153,7 +153,7 @@ async def set_platform_rate(body: PlatformRateBody, current_user: dict = Depends
 
 @router.get("/category-rates", dependencies=[Depends(require_internal)])
 async def list_category_rates():
-    """Every Networking Marketing partner category alongside its own
+    """Every CONNECT partner category alongside its own
     category-level default Marketing Fee (if ROSKYRO has set one). Exists
     because a partner's own self-set flat fee (or the platform default, if
     they haven't set one) previously applied the exact same rupee amount
@@ -674,7 +674,7 @@ async def admin_wallet_summary(period: str = Query(..., description="YYYY-MM")):
       - Marketing Fees a PARTNER pays for a completed referral (settlements
         collection, scoped by period_month).
       - Subscription renewal charges a BUSINESS pays for their own
-        GROW/MANAGE/Networking Marketing/Complete plan (subscription_renewals
+        GROW/MANAGE/CONNECT/Complete plan (subscription_renewals
         collection, scoped by period).
     One stream flows OUT of ROSKYRO:
       - The Marketing Fee Payout ROSKYRO owes back to referring businesses --
