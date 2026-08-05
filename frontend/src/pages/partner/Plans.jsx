@@ -7,8 +7,8 @@ import { Card, Badge, Button, PageLoading, formatCurrency, formatDate, formatDat
 import { upiPaymentQrDataUrl } from '../../lib/upiQr';
 
 // Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
-// 'connect' now displays as "Networking Marketing" everywhere in the UI.
-const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing' };
+// 'connect' now displays as "CONNECT" everywhere in the UI.
+const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'CONNECT' };
 
 function CheckoutModal({ plan, cycle, payment, onConfirm, onCancel, busy }) {
   const [copied, setCopied] = useState(false);
