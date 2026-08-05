@@ -2,7 +2,7 @@
 Marketing Fee model's pending -> business self-reports paid -> ROSKYRO
 confirms received -> invoice pattern (see test_marketing_fees.py), but for
 money flowing the OTHER direction: a business pays ROSKYRO for its own
-GROW/MANAGE/Networking Marketing/Complete subscription renewal, not a
+GROW/MANAGE/CONNECT/Complete subscription renewal, not a
 partner paying a per-referral fee.
 
 Deliberately scoped to RENEWALS only -- the very first billing period is
