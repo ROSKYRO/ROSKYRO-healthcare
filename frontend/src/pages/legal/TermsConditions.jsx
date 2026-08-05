@@ -10,13 +10,13 @@ const SECTIONS = [
   {
     heading: 'Services',
     paragraphs: [
-      'ROSKYRO provides a subscription-based AI + Human operating system for healthcare businesses across three pillars — GROW (visibility and marketing), MANAGE (operations) and Networking Marketing (partner network and referrals). Features available to your account depend on which pillar(s) you are subscribed to.',
+      'ROSKYRO provides a subscription-based AI + Human operating system for healthcare businesses across three pillars — GROW (visibility and marketing), MANAGE (operations) and CONNECT (partner network and referrals). Features available to your account depend on which pillar(s) you are subscribed to.',
     ],
   },
   {
     heading: 'Pricing & Payments',
     paragraphs: [
-      'Subscription fees are billed monthly (or annually, where selected) and are payable to ROSKYRO via the payment method indicated at checkout or onboarding. Under Networking Marketing, a patient referral is treated as marketing the referring business performs for the receiving partner: the partner pays ROSKYRO a Marketing Fee (always a flat rupee amount, never a percentage) for each completed referral, and ROSKYRO periodically pays a fixed percentage of the Marketing Fees it collects back to the referring business as a Marketing Fee Payout, accompanied by an invoice. Prices may change with prior notice; continued use after a price change constitutes acceptance of the new pricing.',
+      'Subscription fees are billed monthly (or annually, where selected) and are payable to ROSKYRO via the payment method indicated at checkout or onboarding. Under CONNECT, a patient referral is treated as marketing the referring business performs for the receiving partner: the partner pays ROSKYRO a Marketing Fee (always a flat rupee amount, never a percentage) for each completed referral, and ROSKYRO periodically pays a fixed percentage of the Marketing Fees it collects back to the referring business as a Marketing Fee Payout, accompanied by an invoice. Prices may change with prior notice; continued use after a price change constitutes acceptance of the new pricing.',
     ],
   },
   {
