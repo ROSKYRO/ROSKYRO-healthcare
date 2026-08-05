@@ -75,7 +75,7 @@ const FOOTER_COMPANY = [
 const FOOTER_SOLUTIONS = [
   { to: '/services', label: 'Grow' },
   { to: '/services', label: 'Manage' },
-  { to: '/services', label: 'Networking Marketing' },
+  { to: '/services', label: 'Connect' },
   { to: '/services', label: 'AI Visibility' },
   { to: '/services', label: 'Google Business Profile' },
   { to: '/services', label: 'Review Growth' },

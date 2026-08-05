@@ -22,10 +22,10 @@ const NAV = {
     { to: '/app/billing', label: 'Billing', icon: '\u{1F9FE}', pillar: 'manage' },
     { to: '/app/whatsapp', label: 'WhatsApp', icon: '\u{1F4AC}', pillar: 'manage' },
     { to: '/app/booking', label: 'Online Booking (QR)', icon: '\u{1F4F1}', pillar: 'manage' },
-    { section: 'Networking Marketing', pillar: 'connect' },
-    // Listing yourself as a Networking Marketing partner is always free, regardless of
+    { section: 'CONNECT', pillar: 'connect' },
+    // Listing yourself as a CONNECT partner is always free, regardless of
     // subscription -- so this item deliberately has no `pillar`, unlike the
-    // rest of the Networking Marketing section below it.
+    // rest of the CONNECT section below it.
     { to: '/app/become-partner', label: 'Become a Partner', icon: '\u{1F195}' },
     // Choosing/creating a referral is restricted to certain business types
     // (Clinic, Hospital, Eye Hospital) -- see lib/referralRights.js. Other
@@ -93,10 +93,10 @@ const NAV = {
 };
 
 // Pillar codes stay lowercase internally ('grow'/'manage'/'connect'), but
-// 'connect' now displays as "Networking Marketing" everywhere in the UI --
+// 'connect' now displays as "CONNECT" everywhere in the UI --
 // a plain .toUpperCase() on the code would still read "CONNECT", so any
 // display string built from a pillar code goes through this map instead.
-const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing' };
+const PILLAR_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'CONNECT' };
 
 const SHELL_LABEL = {
   customer: 'Business Dashboard',
