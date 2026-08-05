@@ -129,7 +129,7 @@ export default function PaymentConfirmations() {
 
       <RequestsTable
         title="Business subscriptions"
-        subtitle="GROW / MANAGE / Networking Marketing / Complete + add-ons, claimed by a business owner."
+        subtitle="GROW / MANAGE / CONNECT / Complete + add-ons, claimed by a business owner."
         rows={businessRows}
         busyId={busyId}
         reasonDrafts={reasonDrafts}

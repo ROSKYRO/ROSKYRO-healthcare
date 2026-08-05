@@ -4,11 +4,11 @@ import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, Table, Button, Input, Textarea, Badge, PageLoading, formatCurrency, formatDate } from '../../components/ui';
 
 // Plan codes stay lowercase internally ('grow'/'manage'/'connect'/'complete'),
-// but 'connect' now displays as "Networking Marketing" -- a plain
+// but 'connect' now displays as "CONNECT" -- a plain
 // .toUpperCase() on the code would still read "CONNECT".
-const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'Networking Marketing', complete: 'ROSKYRO Complete', reels: 'Reel Making' };
+const PLAN_DISPLAY_NAMES = { grow: 'GROW', manage: 'MANAGE', connect: 'CONNECT', complete: 'ROSKYRO Complete', reels: 'Reel Making' };
 
-// One row per Networking Marketing partner category, grouped under its
+// One row per CONNECT partner category, grouped under its
 // group_name -- an inline ₹ input + Save button per row so ROSKYRO can set
 // a category-appropriate default Marketing Fee (e.g. lower for Blood Test
 // Labs, higher for MRI Centers) without touching every partner individually.
@@ -309,7 +309,7 @@ export default function PricingManagement() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Pricing & Payments</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Super admin only — change what GROW / MANAGE / Networking Marketing / Complete cost, and where customer
+          Super admin only — change what GROW / MANAGE / CONNECT / Complete cost, and where customer
           payments are collected.
         </p>
       </div>
@@ -433,7 +433,7 @@ export default function PricingManagement() {
       <div>
         <h2 className="text-lg font-bold text-gray-900 mb-3">Partner Pillar & Bundle Pricing</h2>
         <p className="text-sm text-gray-500 -mt-2 mb-3">
-          What Networking Marketing partners pay — same services as the business catalog above, same pricing too
+          What CONNECT partners pay — same services as the business catalog above, same pricing too
           (always in sync now — edit price via Business Pillar & Bundle Pricing above; copy/features here can still
           differ per audience).
         </p>

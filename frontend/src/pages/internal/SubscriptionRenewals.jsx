@@ -113,7 +113,7 @@ export default function SubscriptionRenewals() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Subscription Renewals</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Har business ki apne ROSKYRO plan (GROW/MANAGE/Networking Marketing/Complete) ki renewal payment yahan track
+            Har business ki apne ROSKYRO plan (GROW/MANAGE/CONNECT/Complete) ki renewal payment yahan track
             hoti hai — pehli billing period instant checkout se already activate ho chuki hoti hai, ye sirf 2nd
             period se aage ki genuine renewals cover karta hai. Ek period ke liye "Generate Renewal Charges" chalane
             se har due subscription ke liye ek pending charge ban jaata hai (dobara chalana safe hai, duplicate nahi
