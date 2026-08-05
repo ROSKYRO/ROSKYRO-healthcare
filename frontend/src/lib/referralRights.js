@@ -1,6 +1,6 @@
 // Mirrors backend/app/routers/referrals.py's REFERRAL_CREATOR_BUSINESS_TYPES.
 // Only these business types have the right to choose/create a referral to a
-// partner. Every other business type can still list itself as a Networking Marketing
+// partner. Every other business type can still list itself as a CONNECT
 // partner (see BecomePartner.jsx, which is deliberately unrestricted) but
 // cannot initiate a referral of its own.
 //
