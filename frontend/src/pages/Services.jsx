@@ -11,7 +11,7 @@ const PILLAR_STYLE = {
   connect: { emoji: '\u{1F91D}', accent: 'text-teal-700', bg: 'bg-teal-50', ring: 'ring-teal-100' },
 };
 
-// The exact, curated Networking Marketing category taxonomy — the categories a
+// The exact, curated CONNECT category taxonomy — the categories a
 // healthcare business picks from when it lists itself as a partner (see
 // customer/BecomePartner.jsx), mirrored here for the public marketing page.
 const CONNECT_CATEGORIES = [
@@ -43,7 +43,7 @@ const PILLAR_BREAKDOWN = [
     ],
   },
   {
-    code: 'connect', emoji: '\u{1F91D}', title: 'Networking Marketing', accent: 'text-teal-700', bg: 'bg-teal-50',
+    code: 'connect', emoji: '\u{1F91D}', title: 'CONNECT', accent: 'text-teal-700', bg: 'bg-teal-50',
     groups: [
       { name: 'Partner network', items: ['Referral Network', 'Diagnostic Partners', 'Imaging Partners', 'Rehabilitation Partners', 'Healthcare Collaborations'] },
     ],
@@ -132,7 +132,7 @@ export default function Services() {
         </h1>
         <p className="mt-4 text-gray-500">
           Get more patients, run your day-to-day without the chaos, and build a trusted network of partners —
-          as a healthcare business, or as a Networking Marketing partner. Each is its own subscription, so you
+          as a healthcare business, or as a CONNECT partner. Each is its own subscription, so you
           only pay for what you actually need.
         </p>
       </section>
@@ -212,7 +212,7 @@ export default function Services() {
         <div className="border border-gray-200 rounded-2xl p-8 md:p-12">
           <div className="text-center max-w-2xl mx-auto">
             <p className="inline-block text-xs font-semibold tracking-wide uppercase bg-teal-50 text-teal-700 rounded-full px-3 py-1 mb-4">
-              {'\u{1F91D}'} Networking Marketing
+              {'\u{1F91D}'} CONNECT
             </p>
             <h3 className="text-2xl font-bold text-gray-900">Verified Healthcare Service Partners</h3>
             <p className="mt-3 text-gray-600">

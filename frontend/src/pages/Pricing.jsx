@@ -10,14 +10,14 @@ import FaqList from '../components/FaqList';
 const PRICING_FAQS = [
   { q: 'Is there any contract?', a: 'No. Every ROSKYRO subscription is month-to-month by default (an annual plan is available at a discount). There is no long-term lock-in and no cancellation penalty.' },
   { q: 'Can I cancel anytime?', a: 'Yes, from your dashboard billing settings, effective at the end of your current billing cycle.' },
-  { q: 'Can I take just one pillar?', a: 'Yes — GROW, MANAGE and Networking Marketing are each priced and billed separately. Take one, two, or bundle all three as Complete Platform to save.' },
-  { q: 'What payment methods do you accept?', a: 'Subscriptions are paid to ROSKYRO directly via UPI. Under Networking Marketing, a partner pays ROSKYRO a flat-rupee Marketing Fee per completed referral, and ROSKYRO periodically pays a fixed percentage of that back to the referring business as a Marketing Fee Payout.' },
+  { q: 'Can I take just one pillar?', a: 'Yes — GROW, MANAGE and CONNECT are each priced and billed separately. Take one, two, or bundle all three as Complete Platform to save.' },
+  { q: 'What payment methods do you accept?', a: 'Subscriptions are paid to ROSKYRO directly via UPI. Under CONNECT, a partner pays ROSKYRO a flat-rupee Marketing Fee per completed referral, and ROSKYRO periodically pays a fixed percentage of that back to the referring business as a Marketing Fee Payout.' },
   { q: 'Is there a setup fee?', a: 'No hidden setup fee — onboarding and training are included in your subscription.' },
 ];
 
-// Same three services (GROW / MANAGE / Networking Marketing), two different
+// Same three services (GROW / MANAGE / CONNECT), two different
 // audiences sharing the exact same price catalog -- a healthcare business
-// pays business pricing, a Networking Marketing partner pays the identical
+// pays business pricing, a CONNECT partner pays the identical
 // partner pricing, plus the optional Reel Making add-on. (The former "buy
 // 2, get the 3rd free" bundle bonus has been retired.)
 const AUDIENCES = [
@@ -57,8 +57,8 @@ export default function Pricing() {
           Three services. Two ways to work with ROSKYRO.
         </h1>
         <p className="mt-4 text-gray-500">
-          The exact same GROW / MANAGE / Networking Marketing services, at the exact same pricing — as a healthcare
-          business growing patients and operations, or as a Networking Marketing partner growing referral volume.
+          The exact same GROW / MANAGE / CONNECT services, at the exact same pricing — as a healthcare
+          business growing patients and operations, or as a CONNECT partner growing referral volume.
           No long-term contract — cancel any time.
         </p>
       </section>
