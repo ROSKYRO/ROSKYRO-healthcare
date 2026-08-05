@@ -43,7 +43,7 @@ audit_logs = db["audit_logs"]
 plans = db["plans"]
 organization_subscriptions = db["organization_subscriptions"]
 # Partner-audience mirror of plans/organization_subscriptions above -- the
-# ROSKYRO Networking Marketing side now also sells GROW/MANAGE/CONNECT as
+# partner side of ROSKYRO now also sells GROW/MANAGE/CONNECT as
 # real recurring subscriptions (its own pricing, kept in this SEPARATE
 # collection so the business-audience catalog in `plans` above is never
 # touched), plus optional add-ons (see the "reels" add-on plan). Kept as
@@ -58,7 +58,7 @@ partner_subscriptions = db["partner_subscriptions"]
 # pending -> business self-reports paid -> ROSKYRO confirms received ->
 # invoice lifecycle the Marketing Fee side already uses (settlements ->
 # marketing_payouts), but for money flowing the OTHER direction: a business
-# owes ROSKYRO for its own GROW/MANAGE/Networking Marketing/Complete
+# owes ROSKYRO for its own GROW/MANAGE/CONNECT/Complete
 # subscription, not a partner owing a referral fee. Deliberately excludes
 # the very first billing period (that one is still the existing instant
 # "I've Paid — Activate" checkout in plans.py's /subscribe) -- this

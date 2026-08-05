@@ -33,12 +33,12 @@ from app.config import ADMIN_EMAIL
 DEMO_PASSWORD = "Roskyro@123"
 
 # Partner category taxonomy -- the exact, curated list of categories a
-# healthcare business can list itself under to join the Networking Marketing
+# healthcare business can list itself under to join the CONNECT
 # referral network. Two-level: a handful of broad groups (used for grouped <optgroup>
 # dropdowns and the public marketing pages), each with specific leaf
 # categories a partner actually picks. This is the definitive, exhaustive
 # list -- not a superset of every possible service type -- per the
-# product decision behind Networking Marketing's "Verified Healthcare Service Partners"
+# product decision behind CONNECT's "Verified Healthcare Service Partners"
 # positioning.
 CATEGORY_GROUPS = [
     ("specialist_referrals", "👨‍⚕️ Specialist Referrals", [
@@ -165,7 +165,7 @@ async def run():
             "sort_order": 2,
         },
         {
-            "_id": "connect", "name": "Networking Marketing", "tagline": "Join India's trusted healthcare business network.",
+            "_id": "connect", "name": "CONNECT", "tagline": "Join India's trusted healthcare business network.",
             "monthly_price": 4999, "yearly_price": 47990, "badge": None,
             "description": "The ROSKYRO Healthcare Referral & Partner Network — trusted partners, tracked referrals, configurable settlements.",
             "best_for": "Clinics, Hospitals, Labs & Healthcare Businesses",
@@ -175,7 +175,7 @@ async def run():
             "sort_order": 3,
         },
         {
-            "_id": "complete", "name": "ROSKYRO Complete", "tagline": "Everything in Grow + Manage + Networking Marketing",
+            "_id": "complete", "name": "ROSKYRO Complete", "tagline": "Everything in Grow + Manage + CONNECT",
             "monthly_price": 24999, "yearly_price": 239990, "badge": "Most Popular",
             "description": "Everything ROSKYRO offers, at a bundled price — one team, one dashboard, one bill.",
             "best_for": "Multi-speciality Clinics, Hospitals & Healthcare Groups",
@@ -371,7 +371,7 @@ async def run():
          {"name": "Ultrasound (Sonography)", "description": "", "price": 1200}],
     )
     clear_vision_eye = await make_partner(
-        # No dedicated ophthalmology category in the curated Networking Marketing
+        # No dedicated ophthalmology category in the curated CONNECT
         # taxonomy -- "Other Specialists" is the closest fit.
         "ClearVision Eye Hospital", "eye_hospital", "Mumbai", "other_specialists", True, True, "Same day consult",
         [{"name": "Comprehensive Eye Checkup", "description": "", "price": 500},
@@ -384,7 +384,7 @@ async def run():
     )
     pune_heart_care = await make_partner(
         # Replaces the old "Metro Ambulance Services" demo partner --
-        # ambulance/transport isn't part of the curated Networking Marketing category
+        # ambulance/transport isn't part of the curated CONNECT category
         # list, so this slot became a cardiology specialist instead
         # (keeps the same emergency/in-progress referral scenario below).
         "Pune Heart Care Centre", "specialist_clinic", "Pune", "cardiologist", True, False, "Same day",
@@ -394,7 +394,7 @@ async def run():
 
     # Give a couple of demo partners partner-audience pillar subscriptions,
     # so the partner-side Plans page has visible data -- CityScan gets
-    # GROW + Networking Marketing, plus a pre-existing free MANAGE row
+    # GROW + CONNECT, plus a pre-existing free MANAGE row
     # (source="bundle_bonus", is_free_addon=True). This represents a
     # partner who was granted the free MANAGE bonus back when the "GROW +
     # CONNECT -> MANAGE free" mechanic still existed -- that mechanic has
