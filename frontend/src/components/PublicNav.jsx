@@ -13,13 +13,16 @@ const LINKS = [
 ];
 
 /** Shared header for every public marketing page so nav + sign-in/get-started
- * stays consistent site-wide. `dark` switches between the dark hero-page
- * style (Landing) and the light style used on every other public page. */
-export function PublicHeader({ dark }) {
+ * stays consistent site-wide. Every public page (including the homepage,
+ * which is a plain white page like the rest) renders the header on a light
+ * background -- `landing` only swaps the accent color from the site-wide
+ * green ('brand') to the logo-matched indigo-violet ('landing'), scoped to
+ * the homepage only. */
+export function PublicHeader({ landing }) {
   const { pathname } = useLocation();
   return (
     <header className="max-w-6xl mx-auto px-6 py-6 flex items-center justify-between">
-      <Link to="/" className={clsx('flex items-center gap-2 text-xl font-extrabold tracking-tight', dark ? 'text-white' : 'text-brand-700')}>
+      <Link to="/" className={clsx('flex items-center gap-2 text-xl font-extrabold tracking-tight', landing ? 'text-landing-900' : 'text-brand-700')}>
         <img src={logo} alt="ROSKYRO" className="h-9 w-9 object-contain" />
         ROSKYRO
       </Link>
@@ -32,9 +35,9 @@ export function PublicHeader({ dark }) {
               to={l.to}
               className={clsx(
                 'text-sm font-medium transition',
-                dark
-                  ? isActive ? 'text-white' : 'text-brand-100 hover:text-white'
-                  : isActive ? 'text-brand-700' : 'text-gray-600 hover:text-gray-900'
+                isActive
+                  ? (landing ? 'text-landing-700' : 'text-brand-700')
+                  : 'text-gray-600 hover:text-gray-900'
               )}
             >
               {l.label}
@@ -43,14 +46,14 @@ export function PublicHeader({ dark }) {
         })}
       </nav>
       <div className="flex items-center gap-3">
-        <Link to="/login" className={clsx('text-sm font-medium', dark ? 'text-brand-100 hover:text-white' : 'text-gray-600 hover:text-gray-900')}>
+        <Link to="/login" className="text-sm font-medium text-gray-600 hover:text-gray-900">
           Sign in
         </Link>
         <Link
           to="/register"
           className={clsx(
-            'text-sm font-semibold px-4 py-2 rounded-lg transition',
-            dark ? 'bg-white text-brand-900 hover:bg-brand-50' : 'bg-brand-600 text-white hover:bg-brand-700'
+            'text-sm font-semibold px-4 py-2 rounded-lg transition text-white',
+            landing ? 'bg-landing-600 hover:bg-landing-700' : 'bg-brand-600 hover:bg-brand-700'
           )}
         >
           Get started
