@@ -1,8 +1,15 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { Card, CardHeader, Badge, Button, Input, PageLoading, Textarea, formatDateTime } from '../../components/ui';
+
+// Kept in sync with backend/app/routers/referrals.py's ALLOWED_REPORT_CONTENT_TYPES
+// / MAX_REPORT_FILE_BYTES -- checked client-side too so a partner gets an
+// instant, friendly error instead of waiting on a round-trip just to be
+// told the file type/size was rejected.
+const REPORT_ACCEPT = '.pdf,.jpg,.jpeg,.png,.webp';
+const REPORT_MAX_BYTES = 15 * 1024 * 1024;
 
 const STEP_LABELS = {
   draft: 'Referral Created', pending_review: 'Held for ROSKYRO Review', sent: 'Sent to Partner',
@@ -19,7 +26,10 @@ function availableActions(referral, user) {
   if (shell === 'partner') {
     if (s === 'sent') actions.push({ status: 'accepted', label: 'Accept Referral', variant: 'primary' }, { status: 'declined', label: 'Decline', variant: 'danger' });
     if (s === 'accepted') actions.push({ status: 'in_progress', label: 'Mark In Progress', variant: 'primary' });
-    if (s === 'in_progress') actions.push({ status: 'report_uploaded', label: 'Upload Report & Notify Doctor', variant: 'primary' });
+    // requiresFile: this action opens a file picker and hits
+    // POST /referrals/:id/report (multipart) instead of the plain JSON
+    // /transition endpoint -- see the file-input handling below.
+    if (s === 'in_progress') actions.push({ status: 'report_uploaded', label: 'Upload Report & Notify Doctor', variant: 'primary', requiresFile: true });
     // Partner has serviced the patient and can close the referral out
     // themselves once they've paid ROSKYRO the Marketing Fee -- attaching a
     // payment reference here (see the field rendered below) records their
@@ -49,6 +59,7 @@ export default function ReferralDetail({ basePath }) {
   const [paymentReference, setPaymentReference] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
 
   const [loadError, setLoadError] = useState('');
 
@@ -79,6 +90,28 @@ export default function ReferralDetail({ basePath }) {
       setError(err?.response?.data?.error || 'Could not update referral.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function uploadReport(file) {
+    if (!file) return;
+    if (file.size > REPORT_MAX_BYTES) {
+      setError('Report file is too large (15MB max).');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      await api.post(`/referrals/${id}/report`, formData);
+      setNote('');
+      load();
+    } catch (err) {
+      setError(err?.response?.data?.detail?.error || err?.response?.data?.detail || err?.response?.data?.error || 'Could not upload report.');
+    } finally {
+      setBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
 
@@ -176,6 +209,21 @@ export default function ReferralDetail({ basePath }) {
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-4">Urgency</p>
             <Badge tone={referral.urgency === 'emergency' ? 'urgent' : referral.urgency === 'urgent' ? 'high' : 'normal'}>{referral.urgency}</Badge>
 
+            {referral.report_download_url && (
+              <>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-4">Report</p>
+                <a
+                  href={referral.report_download_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block mt-1 text-sm text-brand-700 font-medium underline"
+                >
+                  ⬇ Download Report
+                </a>
+                <p className="text-xs text-gray-400 mt-0.5">Link is freshly generated on every page load, so it never expires while you're viewing this page.</p>
+              </>
+            )}
+
             {referral.clinical_notes && (
               <>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mt-4">Clinical Notes</p>
@@ -198,13 +246,28 @@ export default function ReferralDetail({ basePath }) {
                 />
               )}
               {error && <p className="text-sm text-rose-600 mb-2">{error}</p>}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={REPORT_ACCEPT}
+                className="hidden"
+                onChange={(e) => uploadReport(e.target.files?.[0])}
+              />
               <div className="flex flex-col gap-2">
                 {actions.map((a) => (
-                  <Button key={a.status} variant={a.variant} disabled={busy} onClick={() => doTransition(a.status, a.needsPaymentReference)}>
+                  <Button
+                    key={a.status}
+                    variant={a.variant}
+                    disabled={busy}
+                    onClick={() => (a.requiresFile ? fileInputRef.current?.click() : doTransition(a.status, a.needsPaymentReference))}
+                  >
                     {a.label}
                   </Button>
                 ))}
               </div>
+              {actions.some((a) => a.requiresFile) && (
+                <p className="text-xs text-gray-400 mt-2">PDF, JPG, PNG ya WEBP — 15MB tak. Upload hote hi patient ko WhatsApp par download link chala jayega.</p>
+              )}
               {actions.some((a) => a.needsPaymentReference) && (
                 <p className="text-xs text-gray-400 mt-2">
                   Payment reference dena optional hai, lekin dene se ROSKYRO ko confirm karna aasan ho jaata hai. Jab tak
