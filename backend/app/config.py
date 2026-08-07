@@ -48,3 +48,21 @@ WHATSAPP_MODE = os.getenv("WHATSAPP_MODE", "queue")
 # (Railway's Variables tab), never committed to source or seed data.
 WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN")
 WHATSAPP_API_PHONE_NUMBER_ID = os.getenv("WHATSAPP_API_PHONE_NUMBER_ID")
+
+# Referral report file storage (Backblaze B2, S3-compatible API) -- see
+# app/utils/report_storage.py for how these are actually used. Real values
+# live ONLY in Railway's Variables tab, same rule as every other credential
+# above; left unset here so local/test runs that never touch report upload
+# behave normally (report_storage.py raises a clear error if a report
+# upload is attempted without these configured, instead of a confusing
+# boto3 stack trace).
+B2_KEY_ID = os.getenv("B2_KEY_ID")
+B2_APPLICATION_KEY = os.getenv("B2_APPLICATION_KEY")
+B2_BUCKET_NAME = os.getenv("B2_BUCKET_NAME")
+B2_ENDPOINT = os.getenv("B2_ENDPOINT")
+# How long a patient/business-facing report download link stays valid
+# before it 404s. Kept well under B2's own signing limits; a fresh link is
+# generated every time the referral detail page is loaded, so this only
+# controls how long the *WhatsApp-sent* link (a one-time snapshot) keeps
+# working after it's texted to the patient.
+B2_REPORT_LINK_VALID_SECONDS = int(os.getenv("B2_REPORT_LINK_VALID_SECONDS", str(7 * 24 * 3600)))
