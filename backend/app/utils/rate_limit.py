@@ -40,6 +40,13 @@ _LIMITS = {
     # (several staff behind one shared clinic IP, or this app's own test
     # suite, which logs in dozens of times per run with valid credentials).
     "auth_login_failed": (10, 60),
+    # Fixed: POST /api/password-resets had no throttling at all -- see
+    # routers/password_resets.py's submit_request() docstring for the
+    # full user-enumeration story this closes off. Same shape as
+    # auth_login_failed: generous for a genuinely locked-out person
+    # retrying a couple of times, tight enough to stop a scripted sweep
+    # through a list of emails/phone numbers.
+    "password_reset_submit": (10, 60),
 }
 
 
