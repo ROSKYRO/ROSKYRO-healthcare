@@ -1,7 +1,7 @@
 import asyncio
 import re
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File
 from pydantic import BaseModel
 from pymongo.errors import DuplicateKeyError
 
@@ -17,6 +17,8 @@ from app.utils.notify import notify
 from app.utils.ids import new_id, now, to_out, to_out_many
 from app.utils.counters import next_sequence
 from app.utils.whatsapp_sender import dispatch_message
+from app.utils import report_storage
+from app.config import B2_REPORT_LINK_VALID_SECONDS
 
 router = APIRouter(
     prefix="/api/referrals",
@@ -119,6 +121,21 @@ async def _notify_patient_whatsapp(referral: dict, event: str) -> dict | None:
     location_bit = f", {partner_city}" if partner_city else ""
     contact_bit = f" Contact: {partner_phone}." if partner_phone else ""
 
+    # A fresh signed download link, built only when there's actually a
+    # file to link to -- older referrals (or ones where the report was
+    # only verbally/offline reported) have no report_file_key, and this
+    # falls back to the original "contact ROSKYRO" text for those, same
+    # as before this feature existed. Never lets a storage hiccup break
+    # the referral flow itself -- worst case, patient gets the fallback
+    # text instead of a broken/missing link.
+    report_link = None
+    report_link_days = B2_REPORT_LINK_VALID_SECONDS // 86400
+    if event == "report_uploaded" and referral.get("report_file_key") and report_storage.is_configured():
+        try:
+            report_link = report_storage.build_download_link(referral["report_file_key"])
+        except Exception:
+            report_link = None
+
     messages = {
         "sent": (
             f"Hi {referral['patient_name']}, ROSKYRO Health Network ki taraf se aapko {partner_name}{location_bit} "
@@ -131,7 +148,11 @@ async def _notify_patient_whatsapp(referral: dict, event: str) -> dict | None:
         ),
         "report_uploaded": (
             f"Hi {referral['patient_name']}, {partner_name} ne aapki report taiyar kar di hai. "
-            f"Kripya report review ke liye ROSKYRO se sampark karein."
+            + (
+                f"Yahan se download karein: {report_link} (link {report_link_days} din tak valid hai)."
+                if report_link else
+                "Kripya report review ke liye ROSKYRO se sampark karein."
+            )
         ),
         "completed": (
             f"Hi {referral['patient_name']}, ROSKYRO Health Network dwara kiya gaya aapka referral "
@@ -290,6 +311,17 @@ async def get_referral(referral_id: str, current_user: dict = Depends(get_curren
     out["category_name"] = pc.get("name") if pc else None
     out["referring_doctor_name"] = du.get("name") if du else None
     out["referring_doctor_email"] = du.get("email") if du else None
+
+    # A fresh signed link every time this page loads, rather than storing
+    # one on the referral doc -- so it never shows a dead/expired link to
+    # someone viewing the referral days after the report was uploaded
+    # (only the one-time WhatsApp text is a frozen snapshot; this is not).
+    out["report_download_url"] = None
+    if referral.get("report_file_key") and report_storage.is_configured():
+        try:
+            out["report_download_url"] = report_storage.build_download_link(referral["report_file_key"])
+        except Exception:
+            out["report_download_url"] = None
 
     return {
         "referral": out,
@@ -622,6 +654,149 @@ async def transition_referral(referral_id: str, body: TransitionBody, current_us
         await _notify_patient_whatsapp(updated, body.status)
 
     return {"referral": to_out(updated)}
+
+
+MAX_REPORT_FILE_BYTES = 15 * 1024 * 1024  # 15MB
+ALLOWED_REPORT_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+
+
+def _looks_like_declared_type(content: bytes, declared_content_type: str | None) -> bool:
+    """Cheap magic-byte sniff -- confirms the file's actual first few bytes
+    match what the client claimed in Content-Type, instead of trusting
+    that header blindly (see the call site for why that matters here)."""
+    sig = content[:12]
+    if declared_content_type == "application/pdf":
+        return sig.startswith(b"%PDF-")
+    if declared_content_type == "image/jpeg":
+        return sig.startswith(b"\xff\xd8\xff")
+    if declared_content_type == "image/png":
+        return sig.startswith(b"\x89PNG\r\n\x1a\n")
+    if declared_content_type == "image/webp":
+        return sig.startswith(b"RIFF") and sig[8:12] == b"WEBP"
+    return False
+
+
+@router.post("/{referral_id}/report")
+async def upload_referral_report(
+    referral_id: str, file: UploadFile = File(...), current_user: dict = Depends(get_current_user),
+):
+    """Partner-side "Upload Report & Notify Doctor" action, now backed by
+    an actual file (see app/utils/report_storage.py) instead of being a
+    bare status flip. Combines what used to be two separate steps --
+    transition to report_uploaded, then notify the patient -- into one
+    call, since the patient's WhatsApp message content now depends on
+    whether a real file was attached (a working download link) or not
+    (falls back to "contact ROSKYRO", same wording as before this
+    feature existed).
+
+    Deliberately a separate endpoint from POST /transition rather than
+    bolting a file onto that one: JSON-body transitions (used everywhere
+    else, including ops force-completing a referral with no file
+    involved) and multipart file uploads don't mix cleanly in one FastAPI
+    endpoint. Internal ops can still force-transition to report_uploaded
+    via /transition with no file (e.g. the report was shared over a phone
+    call) -- that path is untouched by this endpoint existing."""
+    referral = await referrals.find_one({"_id": referral_id})
+    if not referral:
+        raise HTTPException(status_code=404, detail="Referral not found.")
+    if referral["status"] != "in_progress":
+        raise HTTPException(status_code=400, detail={
+            "error": f"Cannot upload a report while referral is '{referral['status']}'.",
+            "allowedNext": TRANSITIONS.get(referral["status"], []),
+        })
+
+    partner = await partners.find_one({"_id": referral["partner_id"]})
+    partner_org_id = partner["org_id"] if partner else None
+    partner_side = current_user["appShell"] == "partner" and current_user["orgId"] == partner_org_id
+    internal = current_user["appShell"] == "internal"
+    if not (partner_side or internal):
+        raise HTTPException(status_code=403, detail="Only the receiving partner can upload a report.")
+
+    if file.content_type not in ALLOWED_REPORT_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Only PDF, JPEG, PNG or WEBP files are accepted for reports.")
+
+    # Bounded, chunked read -- `await file.read()` with no size argument
+    # would buffer the ENTIRE upload into memory before the size check
+    # below ever ran. Nothing upstream (FastAPI/Starlette has no default
+    # request-body cap) stops a client from streaming an arbitrarily large
+    # body at this endpoint, so an unbounded .read() is a real memory-
+    # exhaustion vector on a publicly reachable authenticated endpoint.
+    # Reading in 1MB chunks and aborting the moment the running total
+    # crosses the limit caps worst-case memory use at roughly
+    # MAX_REPORT_FILE_BYTES + one chunk, regardless of how much more the
+    # client tries to send.
+    chunks = []
+    total_bytes = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_bytes += len(chunk)
+        if total_bytes > MAX_REPORT_FILE_BYTES:
+            raise HTTPException(status_code=400, detail="Report file is too large (15MB max).")
+        chunks.append(chunk)
+    content = b"".join(chunks)
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # The declared Content-Type header is entirely client-supplied and
+    # trivially spoofable (e.g. an .exe renamed with Content-Type:
+    # application/pdf would sail through the check above) -- these files
+    # get stored and later served back to other people (the referring
+    # business, ROSKYRO ops, and via the WhatsApp link, the patient), so
+    # checking the actual file signature (magic bytes) is real defense in
+    # depth here, not just a formality. Rejects a mismatch even though the
+    # declared type looked fine.
+    if not _looks_like_declared_type(content, file.content_type):
+        raise HTTPException(status_code=400, detail="File content doesn't match its declared type — upload may be corrupted or mislabeled.")
+
+    try:
+        report_key = report_storage.upload_report(
+            referral_id=referral_id, filename=file.filename or "report",
+            content=content, content_type=file.content_type,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    updates = {
+        "status": "report_uploaded", "updated_at": now(),
+        "report_file_key": report_key, "report_uploaded_at": now(),
+    }
+    # Same atomic compare-and-set pattern as /transition -- refuses to
+    # double-apply if the referral moved out from under us between our
+    # read and this write. The uploaded file stays in B2 either way
+    # (a harmless orphan at worst), it just doesn't get attached twice.
+    result = await referrals.update_one({"_id": referral_id, "status": "in_progress"}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=409, detail="This referral was just updated by someone else — please refresh and try again.")
+
+    await add_history(referral_id, "report_uploaded", current_user["id"], "Report uploaded.")
+
+    # Same auto-follow-up-task behaviour as the /transition path for this
+    # status (see there for the full rationale).
+    from datetime import timedelta
+    await referral_followups.insert_one({
+        "_id": new_id(), "referral_id": referral_id,
+        "due_date": (now() + timedelta(days=3)).date().isoformat(),
+        "note": "Review report with patient and confirm next steps.",
+        "status": "pending", "created_by": current_user["id"], "created_at": now(),
+    })
+
+    await notify(
+        referral["referring_user_id"], "report_uploaded", "Report uploaded — ready to review",
+        f"Referral {referral['referral_code']}", "referral", referral_id,
+    )
+
+    await log_audit(current_user["id"], "referral.status_changed", "referral", referral_id, {"from": "in_progress", "to": "report_uploaded"})
+    updated = await referrals.find_one({"_id": referral_id})
+    await _notify_patient_whatsapp(updated, "report_uploaded")
+
+    out = to_out(updated)
+    try:
+        out["report_download_url"] = report_storage.build_download_link(report_key)
+    except Exception:
+        out["report_download_url"] = None
+    return {"referral": out}
 
 
 @router.get("/{referral_id}/timeline")
